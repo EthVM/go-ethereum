@@ -82,7 +82,7 @@ var (
 // EthVM data structs
 // ------------------
 
-type TxBlock struct {
+type BlockTx struct {
 	Tx        *types.Transaction
 	Trace     interface{}
 	Pending   bool
@@ -90,8 +90,9 @@ type TxBlock struct {
 }
 
 type BlockIn struct {
+	parentBlock     *types.Block
 	Block           *types.Block
-	TxBlocks        *[]TxBlock
+	TxBlocks        *[]BlockTx
 	State           *state.StateDB
 	PrevTd          *big.Int
 	Receipts        types.Receipts
@@ -104,16 +105,17 @@ type BlockIn struct {
 }
 
 // NewBlockIn Creates and formats a new BlockIn instance
-func NewBlockIn(block *types.Block, txBlocks *[]TxBlock, state *state.StateDB, td *big.Int, receipts []*types.Receipt, signer types.Signer, txFees *big.Int, blockReward *big.Int) *BlockIn {
+func NewBlockIn(parentBlock, block *types.Block, txBlocks *[]BlockTx, state *state.StateDB, td *big.Int, receipts []*types.Receipt, signer types.Signer, txFees *big.Int, blockReward *big.Int) *BlockIn {
 	return &BlockIn{
-		Block:    block,
-		TxBlocks: txBlocks,
-		State:    state,
-		PrevTd:   td,
-		Receipts: receipts,
-		Signer:   signer,
-		IsUncle:  false,
-		TxFees:   txFees,
+		parentBlock: parentBlock,
+		Block:       block,
+		TxBlocks:    txBlocks,
+		State:       state,
+		PrevTd:      td,
+		Receipts:    receipts,
+		Signer:      signer,
+		IsUncle:     false,
+		TxFees:      txFees,
 		BlockRewardFunc: func(block *types.Block) (*big.Int, *big.Int) {
 			reward := new(big.Int).Set(blockReward)
 			multiplier := new(big.Int).Div(blockReward, big32)
@@ -136,7 +138,7 @@ func NewBlockIn(block *types.Block, txBlocks *[]TxBlock, state *state.StateDB, t
 	}
 }
 
-type TXMetric struct {
+type TxMetric struct {
 	status   uint
 	pending  bool
 	gasPrice *big.Int
@@ -147,20 +149,20 @@ type TXMetric struct {
 	from     *common.Address
 }
 
-func newTxMetric(blockIn *BlockIn, txBlock TxBlock, index int) TXMetric {
+func newTxMetric(blockIn *BlockIn, txBlock BlockTx, index int) TxMetric {
 	tx := txBlock.Tx
 	receipt := blockIn.Receipts[index]
 
 	// if no receipt, then there is no transaction
 	if receipt == nil {
 		log.Debug("newTxMetric - Receipt not found for transaction", "hash", tx.Hash())
-		return TXMetric{}
+		return TxMetric{}
 	}
 
 	signer := blockIn.Signer
 	from, _ := types.Sender(signer, tx)
 
-	return TXMetric{
+	return TxMetric{
 		gasPrice: tx.GasPrice(),
 		gasUsed:  big.NewInt(int64(receipt.GasUsed)),
 		pending:  txBlock.Pending,
@@ -182,6 +184,7 @@ type BlockMetrics struct {
 	totalTransaction   uint
 	successfulTxs      uint
 	failedTxs          uint
+	blockTime          int64
 }
 
 func newBlockMetrics(blockIn *BlockIn) BlockMetrics {
@@ -190,14 +193,14 @@ func newBlockMetrics(blockIn *BlockIn) BlockMetrics {
 		pendingTransaction: 0,
 		totalTransaction:   0,
 		failedTxs:          0,
+		blockTime:          0,
+		totalGasPrice:      big.NewInt(0),
+		totalGasUsed:       big.NewInt(0),
 	}
 
 	if blockIn.TxBlocks == nil || blockIn.IsUncle {
 		return bm
 	}
-
-	totalGasPrice := big.NewInt(0)
-	totalGasUsed := big.NewInt(0)
 
 	for i, block := range *blockIn.TxBlocks {
 		bm.totalTransaction++
@@ -221,28 +224,30 @@ func newBlockMetrics(blockIn *BlockIn) BlockMetrics {
 			bm.newAccounts = append(bm.newAccounts, ttx.from)
 		}
 
-		totalGasPrice = totalGasPrice.Add(ttx.gasPrice, totalGasPrice)
-		totalGasUsed = totalGasUsed.Add(ttx.gasUsed, totalGasUsed)
+		bm.totalGasPrice = bm.totalGasPrice.Add(ttx.gasPrice, bm.totalGasPrice)
+		bm.totalGasUsed = bm.totalGasUsed.Add(ttx.gasUsed, bm.totalGasUsed)
 	}
 
 	if len(*blockIn.TxBlocks) > 0 {
-		avgGasPrice := totalGasPrice.Div(totalGasPrice, big.NewInt(int64(len(*blockIn.TxBlocks))))
-		bm.avgGasPrice = avgGasPrice
+		bm.avgGasPrice = bm.totalGasPrice.Div(bm.totalGasPrice, big.NewInt(int64(len(*blockIn.TxBlocks))))
 	}
 
-	bm.totalGasPrice = totalGasPrice
-	bm.totalGasUsed = totalGasUsed
+	if blockIn.parentBlock != nil {
+		parentTime := blockIn.parentBlock.Time()
+		now := blockIn.Block.Time()
+		bm.blockTime = now.Int64() - parentTime.Int64()
+	}
 
 	return bm
 }
 
 type PendingTx struct {
+	Block   *types.Block
 	Tx      *types.Transaction
 	Trace   interface{}
 	State   *state.StateDB
 	Signer  types.Signer
 	Receipt *types.Receipt
-	Block   *types.Block
 }
 
 // -----------------
@@ -349,21 +354,6 @@ func (e *EthVM) Connect() {
 		e.dbName = ctx.GlobalString(EthVMDbNameFlag.Name)
 	}
 
-	// TODO: Check this properly
-	// // Check if DB exists (and if not, we setup it)
-	// cursor, err := r.DBList().Run(self.session)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// var rows []interface{}
-	// err = cursor.All(&rows)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// cursor.Close()
-
 	// Create DB
 	r.DBCreate(e.dbName).RunWrite(e.session)
 
@@ -451,7 +441,7 @@ func (e *EthVM) InsertBlock(blockIn *BlockIn) {
 		return
 	}
 
-	processTxs := func(txblocks *[]TxBlock) ([][]byte, []interface{}, []interface{}, []interface{}) {
+	processTxs := func(txblocks *[]BlockTx) ([][]byte, []interface{}, []interface{}, []interface{}) {
 		var (
 			tHashes [][]byte
 			tTxs    []interface{}
@@ -556,7 +546,7 @@ func (e *EthVM) InsertBlock(blockIn *BlockIn) {
 	tHashes, tTxs, tLogs, tTrace := processTxs(blockIn.TxBlocks)
 	bm := newBlockMetrics(blockIn)
 	block, _ := formatBlock(blockIn.Block, tHashes)
-	blockMetadata, _ := formatBlockMetric(blockIn, blockIn.Block, bm)
+	blockMetrics := formatBlockMetric(blockIn, blockIn.Block, bm)
 
 	if block["intNumber"] != 0 {
 		tTrace = append(tTrace, map[string]interface{}{
@@ -661,7 +651,7 @@ func (e *EthVM) InsertBlock(blockIn *BlockIn) {
 		// After that write blocks and blocks_metrics
 		wg.Add(2)
 		go saveToDB(DbTables["blocks"], block)
-		go saveToDB(DbTables["blocks_metrics"], blockMetadata)
+		go saveToDB(DbTables["blocks_metrics"], blockMetrics)
 		wg.Wait()
 	}
 
@@ -696,7 +686,7 @@ func (e *EthVM) InsertPendingTxs(stateDb *state.StateDB, txs []*PendingTx) {
 		go func() {
 			for _, pTx := range pTxs {
 				var tReceipts types.Receipts
-				txBlock := TxBlock{
+				txBlock := BlockTx{
 					Tx:        pTx.Tx,
 					Trace:     pTx.Trace,
 					Pending:   true,
@@ -785,7 +775,7 @@ func (e *EthVM) RemovePendingTx(hash common.Hash) {
 // Helper functions
 // ----------------
 
-func formatTx(blockIn *BlockIn, txBlock TxBlock, index int) (interface{}, map[string]interface{}, map[string]interface{}) {
+func formatTx(blockIn *BlockIn, txBlock BlockTx, index int) (interface{}, map[string]interface{}, map[string]interface{}) {
 	tx := txBlock.Tx
 	receipt := blockIn.Receipts[index]
 	if receipt == nil {
@@ -933,7 +923,7 @@ func formatTx(blockIn *BlockIn, txBlock TxBlock, index int) (interface{}, map[st
 	return rfields, rlogs, rTrace
 }
 
-func formatBlockMetric(blockIn *BlockIn, block *types.Block, bm BlockMetrics) (map[string]interface{}, error) {
+func formatBlockMetric(blockIn *BlockIn, block *types.Block, bm BlockMetrics) map[string]interface{} {
 	head := block.Header() // copies the header once
 	minerBalance := blockIn.State.GetBalance(head.Coinbase)
 	txfees, blockReward, uncleReward := func() (*big.Int, *big.Int, *big.Int) {
@@ -961,7 +951,9 @@ func formatBlockMetric(blockIn *BlockIn, block *types.Block, bm BlockMetrics) (m
 		"hash":      head.Hash().Bytes(),
 		"number":    head.Number,
 		"intNumber": hexutil.Uint64(head.Number.Uint64()),
+
 		"timestamp": time.Unix(head.Time.Int64(), 0),
+		"blockTime": time.Unix(head.Time.Int64(), 0),
 
 		"totalTxs":      bm.totalTransaction,
 		"pendingTxs":    bm.pendingTransaction,
@@ -987,5 +979,5 @@ func formatBlockMetric(blockIn *BlockIn, block *types.Block, bm BlockMetrics) (m
 		"size":       int64(hexutil.Uint64(block.Size())),
 	}
 
-	return bfields, nil
+	return bfields
 }

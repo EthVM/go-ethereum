@@ -875,7 +875,7 @@ func (bc *BlockChain) WriteBlockWithoutState(block *types.Block, td *big.Int) (e
 }
 
 // WriteBlockWithState writes the block and all associated state to the database.
-func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB, txBlocks *[]ethvm.TxBlock, txFees *big.Int) (status WriteStatus, err error) {
+func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB, txBlocks *[]ethvm.BlockTx, txFees *big.Int) (status WriteStatus, err error) {
 	bc.wg.Add(1)
 	defer bc.wg.Done()
 
@@ -915,7 +915,8 @@ func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.
 	}
 
 	// Add block information to ethvm
-	blockIn := ethvm.NewBlockIn(block, txBlocks, state, td, receipts, signer, txFees, blockReward)
+	parentBlock := bc.GetBlockByHash(block.ParentHash())
+	blockIn := ethvm.NewBlockIn(parentBlock, block, txBlocks, state, td, receipts, signer, txFees, blockReward)
 	ethvm.GetInstance().InsertBlock(blockIn)
 
 	// If we're running an archive node, always flush
