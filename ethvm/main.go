@@ -59,6 +59,7 @@ var (
 		"blocks":       "blocks",
 		"block_stats":  "block_stats",
 		"transactions": "transactions",
+		"pending_txs":  "pending_txs",
 		"traces":       "traces",
 		"logs":         "logs",
 		"data":         "data",
@@ -363,6 +364,9 @@ func (e *EthVM) Connect() {
 		"pendingTxs": 0,
 	}).RunWrite(e.session)
 
+	r.DB(e.dbName).Table(DbTables["blocks"]).IndexCreate("intNumber").RunWrite(e.session)
+	r.DB(e.dbName).Table(DbTables["block_stats"]).IndexCreate("timestamp").RunWrite(e.session)
+
 	r.DB(e.dbName).Table(DbTables["transactions"]).IndexCreate("nonceHash").RunWrite(e.session)
 	r.DB(e.dbName).Table(DbTables["transactions"]).IndexCreate("cofrom", r.IndexCreateOpts{Multi: true}).RunWrite(e.session)
 	r.DB(e.dbName).Table(DbTables["transactions"]).IndexCreate("to").RunWrite(e.session)
@@ -372,9 +376,6 @@ func (e *EthVM) Connect() {
 			r.Row.Field("blockIntNumber"),
 			r.Row.Field("hash"),
 		}).RunWrite(e.session)
-
-	r.DB(e.dbName).Table(DbTables["blocks"]).IndexCreate("intNumber").RunWrite(e.session)
-	r.DB(e.dbName).Table(DbTables["block_stats"]).IndexCreate("timestamp").RunWrite(e.session)
 
 	r.DB(e.dbName).Table(DbTables["traces"]).IndexCreateFunc("trace_from", r.Row.Field("trace").Field("transfers").Field("from"), r.IndexCreateOpts{Multi: true}).RunWrite(e.session)
 	r.DB(e.dbName).Table(DbTables["traces"]).IndexCreateFunc("trace_to", r.Row.Field("trace").Field("transfers").Field("to"), r.IndexCreateOpts{Multi: true}).RunWrite(e.session)
@@ -569,40 +570,6 @@ func (e *EthVM) InsertBlock(blockIn *BlockIn) {
 	performSaveToDB := func() {
 		var wg sync.WaitGroup
 
-		saveToDB := func(table string, values interface{}) {
-			defer wg.Done()
-			if values == nil {
-				return
-			}
-
-			log.Info("InsertBlock - saveToDB", "table", table)
-
-			var err error
-			if table == DbTables["transactions"] && len(values.([]interface{})) > 0 {
-				log.Info("InsertBlock - saveToDB", "table", table, "len", len(values.([]interface{})))
-				_, err = r.DB(e.dbName).Table(DbTables[table]).Insert(values, r.InsertOpts{
-					Conflict:      "replace",
-					ReturnChanges: "always",
-				}).Field("changes").ForEach(func(change r.Term) interface{} {
-					return r.Branch(
-						change.Field("old_val"), change.Field("old_val").Field("pending").Branch(
-							r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(
-								func(post r.Term) interface{} {
-									return map[string]interface{}{"pendingTxs": post.Field("pendingTxs").Sub(1).Default(0)}
-								}), r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{})),
-						r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{}))
-				}).RunWrite(e.session)
-			} else {
-				_, err = r.DB(e.dbName).Table(DbTables[table]).Insert(values, r.InsertOpts{
-					Conflict: "replace",
-				}).RunWrite(e.session)
-			}
-
-			if err != nil {
-				panic(err)
-			}
-		}
-
 		updateNonceHashes := func() {
 			defer wg.Done()
 			for _, tx := range tTxs {
@@ -629,13 +596,55 @@ func (e *EthVM) InsertBlock(blockIn *BlockIn) {
 			}
 		}
 
+		saveToDB := func(table string, values interface{}) {
+			defer wg.Done()
+			if values == nil {
+				return
+			}
+
+			log.Info("InsertBlock - saveToDB", "table", table)
+
+			_, err := r.DB(e.dbName).Table(DbTables[table]).Insert(values, r.InsertOpts{
+				Conflict: "replace",
+			}).RunWrite(e.session)
+			if err != nil {
+				panic(err)
+			}
+		}
+
+		deletePTxsFromDb := func(table string, values *[]BlockTx) {
+			defer wg.Done()
+			if values == nil {
+				log.Info("InsertBlock - removePTxsFromDb", "table", table, "len", "empty")
+				return
+			}
+
+			log.Info("InsertBlock - removePTxsFromDb", "table", table, "len", len(*values))
+			for _, pTx := range *values {
+				f := map[string]interface{}{"hash": pTx.Tx.Hash().Bytes()}
+				_, err := r.DB(e.dbName).Table(DbTables[table]).Filter(f).Delete(r.DeleteOpts{ReturnChanges: "always"}).Field("changes").ForEach(func(change r.Term) interface{} {
+					return r.Branch(
+						change.Field("old_val"), change.Field("old_val").Field("pending").Branch(
+							r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(
+								func(post r.Term) interface{} {
+									return map[string]interface{}{"pendingTxs": post.Field("pendingTxs").Sub(1).Default(0)}
+								}), r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{})),
+						r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{}))
+				}).RunWrite(e.session)
+				if err != nil {
+					panic(err)
+				}
+			}
+		}
+
 		// Write first nonce hashes
 		wg.Add(1)
 		go updateNonceHashes()
 		wg.Wait()
 
 		// Write after transactions, logs and traces
-		wg.Add(3)
+		wg.Add(4)
+		go deletePTxsFromDb(DbTables["pending_txs"], blockIn.BlockTxs)
 		go saveToDB(DbTables["transactions"], tTxs)
 		go saveToDB(DbTables["logs"], tLogs)
 		go saveToDB(DbTables["traces"], tTrace)
@@ -726,7 +735,7 @@ func (e *EthVM) InsertPendingTxs(stateDb *state.StateDB, txs []*PendingTx) {
 			panic(err)
 		}
 
-		if table == DbTables["transactions"] && result.Inserted > 0 {
+		if table == DbTables["pending_txs"] && result.Inserted > 0 {
 			r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{"pendingTxs": r.Row.Field("pendingTxs").Add(result.Inserted).Default(0)}).RunWrite(e.session)
 		}
 	}
@@ -737,9 +746,9 @@ func (e *EthVM) InsertPendingTxs(stateDb *state.StateDB, txs []*PendingTx) {
 		select {
 		case v, _ := <-pTxsCh:
 			// Save processed results to DB
-			go saveToDB(DbTables["transactions"], v[0])
-			go saveToDB(DbTables["logs"], v[1])
-			go saveToDB(DbTables["traces"], v[2])
+			go saveToDB(DbTables["pending_txs"], v[0])
+			//go saveToDB(DbTables["logs"], v[1])
+			//go saveToDB(DbTables["traces"], v[2])
 			return
 		}
 	}(pTxsCh)
@@ -761,7 +770,7 @@ func (e *EthVM) RemovePendingTx(hash common.Hash) {
 		}
 	}
 
-	go deleteFromDb(DbTables["transactions"], hash)
+	go deleteFromDb(DbTables["pending_txs"], hash)
 }
 
 // ----------------
