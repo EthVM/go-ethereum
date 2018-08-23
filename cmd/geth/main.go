@@ -157,7 +157,7 @@ var (
 
 	ethVMFlags = []cli.Flag{
 		ethvm.EthVMFlag,
-		ethvm.EthVMCertFlag,
+		ethvm.EthVMBrokersFlag,
 	}
 )
 

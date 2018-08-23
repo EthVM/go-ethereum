@@ -17,12 +17,7 @@
 package ethvm
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"math/big"
-	"net/url"
-	"os"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -31,37 +26,22 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
-	r "gopkg.in/gorethink/gorethink.v3"
+	"github.com/segmentio/kafka-go"
 	"gopkg.in/urfave/cli.v1"
+	"context"
 )
 
 var (
 	// EthVMFlag Save blockchain data to external db, make sure to set RETHINKDB_URL env variable
 	EthVMFlag = cli.BoolFlag{
 		Name:  "ethvm",
-		Usage: "Save blockchain data to external db, make sure to set RETHINKDB_URL env variable",
+		Usage: "Enables EthVM to listen every data on ethereum",
 	}
 
-	// EthVMCertFlag Use custom ssl cert for rethinkdb connection, make sure to set RETHINKDB_CERT env variable
-	EthVMCertFlag = cli.BoolFlag{
-		Name:  "ethvm.cert",
-		Usage: "Use custom ssl cert for rethinkdb connection, make sure to set RETHINKDB_CERT env variable",
-	}
-
-	// EthVMDbNameFlag Select which name will be asigned to the RethinkDB db table
-	EthVMDbNameFlag = cli.StringFlag{
-		Name:  "ethvm.dbName",
-		Usage: "Select which name will be asigned to the RethinkDB db table",
-	}
-
-	// DbTables DB Metadata
-	DbTables = map[string]string{
-		"blocks":         "blocks",
-		"blocks_metrics": "blocks_metrics",
-		"transactions":   "transactions",
-		"traces":         "traces",
-		"logs":           "logs",
-		"data":           "data",
+	// EthVMDbNameFlag Select which name will be assigned to the RethinkDB db table
+	EthVMBrokersFlag = cli.StringFlag{
+		Name:  "ethvm.brokers",
+		Usage: "Specifies a list of kafka brokers to connect",
 	}
 
 	// TraceStr Javascript definition for the tracer that analyzes transactions
@@ -253,9 +233,14 @@ type PendingTx struct {
 type EthVM struct {
 	enabled bool
 
-	// RethinkDB
-	session *r.Session
-	dbName  string
+	// Kafka
+	brokers string
+
+	blocksW *kafka.Writer
+	txsW    *kafka.Writer
+	pTxsW   *kafka.Writer
+	logsW   *kafka.Writer
+	tracesW *kafka.Writer
 }
 
 // Init Saves cli.Context to be used inside EthVM
@@ -271,6 +256,13 @@ func GetInstance() *EthVM {
 
 	instance = &EthVM{
 		enabled: ctx.GlobalBool(EthVMFlag.Name),
+		brokers: func() string {
+			var b = "localhost:9092"
+			if ctx.GlobalString(EthVMBrokersFlag.Name) != "" {
+				b = ctx.GlobalString(EthVMBrokersFlag.Name)
+			}
+			return b
+		}(),
 	}
 	return instance
 }
@@ -280,121 +272,40 @@ func (e *EthVM) isEnabled() bool {
 }
 
 func (e *EthVM) isConnected() bool {
-	return e.isEnabled() && e.session != nil && e.session.IsConnected()
+	return e.isEnabled()
 }
 
 // Connect Performs connection to the DB (and creates tables and indices if needed)
 func (e *EthVM) Connect() {
-	if !e.isEnabled() || e.session != nil {
+	if !e.isEnabled() {
 		return
 	}
 
-	var (
-		opts *r.ConnectOpts
-		err  error
-	)
+	// Create Kafka writers
+	e.blocksW = kafka.NewWriter(kafka.WriterConfig{
+		Brokers: []string{e.brokers},
+		Topic:   "blocks",
+	})
 
-	// Read RETHINKDB_URL env variable
-	if ctx.GlobalBool(EthVMFlag.Name) {
-		rethinkurl, err := url.Parse(os.Getenv("RETHINKDB_URL"))
-		if err != nil {
-			panic("Could not parse correctly env RETHINKDB_URL!")
-		}
+	e.txsW = kafka.NewWriter(kafka.WriterConfig{
+		Brokers: []string{e.brokers},
+		Topic:   "txs",
+	})
 
-		if rethinkurl.User != nil {
-			password, isSet := rethinkurl.User.Password()
-			if !isSet {
-				panic("Password not especified correctly in $RETHINKDB_URL")
-			}
-			opts = &r.ConnectOpts{
-				Address:  rethinkurl.Host,
-				Username: rethinkurl.User.Username(),
-				Password: password,
-			}
-		} else {
-			opts = &r.ConnectOpts{
-				Address: rethinkurl.Host,
-			}
-		}
-	}
+	e.pTxsW = kafka.NewWriter(kafka.WriterConfig{
+		Brokers: []string{e.brokers},
+		Topic:   "pTxs",
+	})
 
-	// Double check that variable has been read correctly
-	if opts == nil {
-		panic("Could not parse correctly env RETHINKDB_URL!")
-	}
+	e.logsW = kafka.NewWriter(kafka.WriterConfig{
+		Brokers: []string{e.brokers},
+		Topic:   "logs",
+	})
 
-	// Read RETHINKDB_CERT_RAW env variable if specified
-	if ctx.GlobalBool(EthVMCertFlag.Name) {
-		cert := os.Getenv("RETHINKDB_CERT_RAW")
-		if cert == "" {
-			panic("$RETHINKDB_CERT_RAW value is empty or invalid")
-		}
-
-		roots := x509.NewCertPool()
-		roots.AppendCertsFromPEM([]byte(cert))
-
-		opts.TLSConfig = &tls.Config{
-			RootCAs: roots,
-		}
-	}
-
-	// Connect
-	e.session, err = r.Connect(*opts)
-	if err != nil {
-		panic(err)
-	}
-
-	e.dbName = "eth_mainnet"
-	if ctx.GlobalString(EthVMDbNameFlag.Name) != "" {
-		e.dbName = ctx.GlobalString(EthVMDbNameFlag.Name)
-	}
-
-	// TODO: Check this properly
-	// // Check if DB exists (and if not, we setup it)
-	// cursor, err := r.DBList().Run(self.session)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// var rows []interface{}
-	// err = cursor.All(&rows)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// cursor.Close()
-
-	// Create DB
-	r.DBCreate(e.dbName).RunWrite(e.session)
-
-	// Create tables
-	for _, v := range DbTables {
-		r.DB(e.dbName).TableCreate(v, r.TableCreateOpts{
-			PrimaryKey: "hash",
-		}).RunWrite(e.session)
-	}
-
-	// Setup indices
-	r.DB(e.dbName).Table(DbTables["data"]).Insert(map[string]interface{}{
-		"hash":       "cached",
-		"pendingTxs": 0,
-	}).RunWrite(e.session)
-
-	r.DB(e.dbName).Table(DbTables["transactions"]).IndexCreate("nonceHash").RunWrite(e.session)
-	r.DB(e.dbName).Table(DbTables["transactions"]).IndexCreate("cofrom", r.IndexCreateOpts{Multi: true}).RunWrite(e.session)
-	r.DB(e.dbName).Table(DbTables["transactions"]).IndexCreate("to").RunWrite(e.session)
-	r.DB(e.dbName).Table(DbTables["transactions"]).IndexCreate("from").RunWrite(e.session)
-	r.DB(e.dbName).Table(DbTables["transactions"]).IndexCreateFunc("numberAndHash",
-		[]interface{}{
-			r.Row.Field("blockIntNumber"),
-			r.Row.Field("hash"),
-		}).RunWrite(e.session)
-
-	r.DB(e.dbName).Table(DbTables["blocks"]).IndexCreate("intNumber").RunWrite(e.session)
-	r.DB(e.dbName).Table(DbTables["blocks_metrics"]).IndexCreate("timestamp").RunWrite(e.session)
-
-	r.DB(e.dbName).Table(DbTables["traces"]).IndexCreateFunc("trace_from", r.Row.Field("trace").Field("transfers").Field("from"), r.IndexCreateOpts{Multi: true}).RunWrite(e.session)
-	r.DB(e.dbName).Table(DbTables["traces"]).IndexCreateFunc("trace_to", r.Row.Field("trace").Field("transfers").Field("to"), r.IndexCreateOpts{Multi: true}).RunWrite(e.session)
+	e.tracesW = kafka.NewWriter(kafka.WriterConfig{
+		Brokers: []string{e.brokers},
+		Topic:   "traces",
+	})
 }
 
 // InsertGenesisTrace Adds a Genesis Block to the DB
@@ -403,46 +314,51 @@ func (e *EthVM) InsertGenesisTrace(gAlloc map[common.Address][]byte, block *type
 		return
 	}
 
-	// Format
-	rTrace := map[string]interface{}{
-		"hash":           common.BytesToHash([]byte("GENESIS_TX")).Bytes(),
-		"blockHash":      block.Hash().Bytes(),
-		"blockNumber":    block.Header().Number.Bytes(),
-		"blockIntNumber": hexutil.Uint64(block.Header().Number.Uint64()),
-		"trace": map[string]interface{}{
-			"isError": false,
-			"msg":     "",
-			"transfers": func() interface{} {
-				var dTraces []interface{}
-				for addr, balance := range gAlloc {
-					dTraces = append(dTraces, map[string]interface{}{
-						"op":    "BLOCK",
-						"value": balance,
-						"to":    addr.Bytes(),
-						"type":  "GENESIS",
-					})
-				}
-				dTraces = append(dTraces, map[string]interface{}{
-					"op":          "BLOCK",
-					"txFees":      big.NewInt(0).Bytes(),
-					"blockReward": big.NewInt(5e+18).Bytes(),
-					"uncleReward": big.NewInt(0).Bytes(),
-					"to":          common.BytesToAddress(make([]byte, 1)).Bytes(),
-					"type":        "REWARD",
-				})
-				return dTraces
-			}(),
-		},
+	//// Format
+	//rTrace := map[string]interface{}{
+	//	"hash":           common.BytesToHash([]byte("GENESIS_TX")).Bytes(),
+	//	"blockHash":      block.Hash().Bytes(),
+	//	"blockNumber":    block.Header().Number.Bytes(),
+	//	"blockIntNumber": hexutil.Uint64(block.Header().Number.Uint64()),
+	//	"trace": map[string]interface{}{
+	//		"isError": false,
+	//		"msg":     "",
+	//		"transfers": func() interface{} {
+	//			var dTraces []interface{}
+	//			for addr, balance := range gAlloc {
+	//				dTraces = append(dTraces, map[string]interface{}{
+	//					"op":    "BLOCK",
+	//					"value": balance,
+	//					"to":    addr.Bytes(),
+	//					"type":  "GENESIS",
+	//				})
+	//			}
+	//			dTraces = append(dTraces, map[string]interface{}{
+	//				"op":          "BLOCK",
+	//				"txFees":      big.NewInt(0).Bytes(),
+	//				"blockReward": big.NewInt(5e+18).Bytes(),
+	//				"uncleReward": big.NewInt(0).Bytes(),
+	//				"to":          common.BytesToAddress(make([]byte, 1)).Bytes(),
+	//				"type":        "REWARD",
+	//			})
+	//			return dTraces
+	//		}(),
+	//	},
+	//}
+	//
+	//// Send to Kafka
+	//go func() {
+	//}()
+
+	// Send to Kafka
+	send := func() {
+		e.tracesW.WriteMessages(context.Background(), kafka.Message{
+			Key:   []byte("Key-A"),
+			Value: []byte("Insert genesis trace!"),
+		})
 	}
 
-	// Save to DB
-	_, err := r.DB(e.dbName).Table(DbTables["traces"]).Insert(rTrace, r.InsertOpts{
-		Conflict: "replace",
-	}).RunWrite(e.session)
-
-	if err != nil {
-		panic(err)
-	}
+	go send()
 }
 
 // InsertBlock Adds a new Block to the DB
@@ -451,221 +367,148 @@ func (e *EthVM) InsertBlock(blockIn *BlockIn) {
 		return
 	}
 
-	processTxs := func(txblocks *[]TxBlock) ([][]byte, []interface{}, []interface{}, []interface{}) {
-		var (
-			tHashes [][]byte
-			tTxs    []interface{}
-			tLogs   []interface{}
-			tTrace  []interface{}
-		)
-		if txblocks == nil {
-			log.Info("InsertBlock - processTxs / Empty txblocks")
-			return tHashes, tTxs, tLogs, tTrace
-		}
+	//processTxs := func(txblocks *[]TxBlock) ([][]byte, []interface{}, []interface{}, []interface{}) {
+	//	var (
+	//		tHashes [][]byte
+	//		tTxs    []interface{}
+	//		tLogs   []interface{}
+	//		tTrace  []interface{}
+	//	)
+	//	if txblocks == nil {
+	//		log.Info("InsertBlock - processTxs / Empty txblocks")
+	//		return tHashes, tTxs, tLogs, tTrace
+	//	}
+	//
+	//	for i, _txBlock := range *txblocks {
+	//		_tTx, _tLogs, _tTrace := formatTx(blockIn, _txBlock, i)
+	//		tTxs = append(tTxs, _tTx)
+	//		if _tLogs["logs"] != nil {
+	//			tLogs = append(tLogs, _tLogs)
+	//		}
+	//		if _tTrace["trace"] != nil {
+	//			tTrace = append(tTrace, _tTrace)
+	//		}
+	//		tHashes = append(tHashes, _txBlock.Tx.Hash().Bytes())
+	//	}
+	//
+	//	log.Info("InsertBlock - processTxs", "tHashes", len(tHashes), "tTxs", len(tTxs), "tLogs", len(tLogs), "tTrace", len(tTrace))
+	//	return tHashes, tTxs, tLogs, tTrace
+	//}
+	//
+	//formatBlock := func(block *types.Block, tHashes [][]byte) (map[string]interface{}, error) {
+	//	head := block.Header() // copies the header once
+	//	minerBalance := blockIn.State.GetBalance(head.Coinbase)
+	//
+	//	txFees, blockReward, uncleReward := func() ([]byte, []byte, []byte) {
+	//		var (
+	//			_txfees []byte
+	//			_uncleR []byte
+	//			_blockR []byte
+	//		)
+	//		if blockIn.TxFees != nil {
+	//			_txfees = blockIn.TxFees.Bytes()
+	//		} else {
+	//			_txfees = make([]byte, 0)
+	//		}
+	//		if blockIn.IsUncle {
+	//			_blockR = blockIn.UncleReward.Bytes()
+	//			_uncleR = make([]byte, 0)
+	//		} else {
+	//			blockR, uncleR := blockIn.BlockRewardFunc(block)
+	//			_blockR, _uncleR = blockR.Bytes(), uncleR.Bytes()
+	//
+	//		}
+	//		return _txfees, _blockR, _uncleR
+	//	}()
+	//
+	//	bfields := map[string]interface{}{
+	//		"number":       head.Number.Bytes(),
+	//		"intNumber":    hexutil.Uint64(head.Number.Uint64()),
+	//		"hash":         head.Hash().Bytes(),
+	//		"parentHash":   head.ParentHash.Bytes(),
+	//		"nonce":        head.Nonce,
+	//		"mixHash":      head.MixDigest.Bytes(),
+	//		"sha3Uncles":   head.UncleHash.Bytes(),
+	//		"logsBloom":    head.Bloom.Bytes(),
+	//		"stateRoot":    head.Root.Bytes(),
+	//		"miner":        head.Coinbase.Bytes(),
+	//		"minerBalance": minerBalance.Bytes(),
+	//		"difficulty":   head.Difficulty.Bytes(),
+	//		"totalDifficulty": func() []byte {
+	//			if blockIn.PrevTd == nil {
+	//				return make([]byte, 0)
+	//			}
+	//			return (new(big.Int).Add(block.Difficulty(), blockIn.PrevTd)).Bytes()
+	//		}(),
+	//		"extraData":         head.Extra,
+	//		"size":              big.NewInt(int64(hexutil.Uint64(block.Size()))).Bytes(),
+	//		"gasLimit":          big.NewInt(int64(head.GasLimit)).Bytes(),
+	//		"gasUsed":           big.NewInt(int64(head.GasUsed)).Bytes(),
+	//		"timestamp":         head.Time.Bytes(),
+	//		"transactionsRoot":  head.TxHash.Bytes(),
+	//		"receiptsRoot":      head.ReceiptHash.Bytes(),
+	//		"transactionHashes": tHashes,
+	//		"uncleHashes": func() [][]byte {
+	//			uncles := make([][]byte, len(block.Uncles()))
+	//			for i, uncle := range block.Uncles() {
+	//				uncles[i] = uncle.Hash().Bytes()
+	//				e.InsertBlock(&BlockIn{
+	//					Block:       types.NewBlockWithHeader(uncle),
+	//					State:       blockIn.State,
+	//					IsUncle:     true,
+	//					UncleReward: blockIn.UncleRewardFunc(block.Uncles(), i),
+	//				})
+	//			}
+	//			return uncles
+	//		}(),
+	//		"isUncle":     blockIn.IsUncle,
+	//		"txFees":      txFees,
+	//		"blockReward": blockReward,
+	//		"uncleReward": uncleReward,
+	//	}
+	//	return bfields, nil
+	//}
+	//
+	//tHashes, tTxs, tLogs, tTrace := processTxs(blockIn.TxBlocks)
+	//bm := newBlockMetrics(blockIn)
+	//block, _ := formatBlock(blockIn.Block, tHashes)
+	//blockMetadata, _ := formatBlockMetric(blockIn, blockIn.Block, bm)
+	//
+	//if block["intNumber"] != 0 {
+	//	tTrace = append(tTrace, map[string]interface{}{
+	//		"hash":           block["hash"],
+	//		"blockHash":      block["hash"],
+	//		"blockNumber":    block["number"],
+	//		"blockIntNumber": block["intNumber"],
+	//		"trace": map[string]interface{}{
+	//			"isError": false,
+	//			"msg":     "",
+	//			"transfers": func() interface{} {
+	//				var dTraces []interface{}
+	//				dTraces = append(dTraces, map[string]interface{}{
+	//					"op":          "BLOCK",
+	//					"txFees":      block["txFees"],
+	//					"blockReward": block["blockReward"],
+	//					"uncleReward": block["uncleReward"],
+	//					"to":          block["miner"],
+	//					"type":        "REWARD",
+	//				})
+	//				return dTraces
+	//			}(),
+	//		},
+	//	})
+	//}
+	//
 
-		for i, _txBlock := range *txblocks {
-			_tTx, _tLogs, _tTrace := formatTx(blockIn, _txBlock, i)
-			tTxs = append(tTxs, _tTx)
-			if _tLogs["logs"] != nil {
-				tLogs = append(tLogs, _tLogs)
-			}
-			if _tTrace["trace"] != nil {
-				tTrace = append(tTrace, _tTrace)
-			}
-			tHashes = append(tHashes, _txBlock.Tx.Hash().Bytes())
-		}
-
-		log.Info("InsertBlock - processTxs", "tHashes", len(tHashes), "tTxs", len(tTxs), "tLogs", len(tLogs), "tTrace", len(tTrace))
-		return tHashes, tTxs, tLogs, tTrace
-	}
-
-	formatBlock := func(block *types.Block, tHashes [][]byte) (map[string]interface{}, error) {
-		head := block.Header() // copies the header once
-		minerBalance := blockIn.State.GetBalance(head.Coinbase)
-
-		txFees, blockReward, uncleReward := func() ([]byte, []byte, []byte) {
-			var (
-				_txfees []byte
-				_uncleR []byte
-				_blockR []byte
-			)
-			if blockIn.TxFees != nil {
-				_txfees = blockIn.TxFees.Bytes()
-			} else {
-				_txfees = make([]byte, 0)
-			}
-			if blockIn.IsUncle {
-				_blockR = blockIn.UncleReward.Bytes()
-				_uncleR = make([]byte, 0)
-			} else {
-				blockR, uncleR := blockIn.BlockRewardFunc(block)
-				_blockR, _uncleR = blockR.Bytes(), uncleR.Bytes()
-
-			}
-			return _txfees, _blockR, _uncleR
-		}()
-
-		bfields := map[string]interface{}{
-			"number":       head.Number.Bytes(),
-			"intNumber":    hexutil.Uint64(head.Number.Uint64()),
-			"hash":         head.Hash().Bytes(),
-			"parentHash":   head.ParentHash.Bytes(),
-			"nonce":        head.Nonce,
-			"mixHash":      head.MixDigest.Bytes(),
-			"sha3Uncles":   head.UncleHash.Bytes(),
-			"logsBloom":    head.Bloom.Bytes(),
-			"stateRoot":    head.Root.Bytes(),
-			"miner":        head.Coinbase.Bytes(),
-			"minerBalance": minerBalance.Bytes(),
-			"difficulty":   head.Difficulty.Bytes(),
-			"totalDifficulty": func() []byte {
-				if blockIn.PrevTd == nil {
-					return make([]byte, 0)
-				}
-				return (new(big.Int).Add(block.Difficulty(), blockIn.PrevTd)).Bytes()
-			}(),
-			"extraData":         head.Extra,
-			"size":              big.NewInt(int64(hexutil.Uint64(block.Size()))).Bytes(),
-			"gasLimit":          big.NewInt(int64(head.GasLimit)).Bytes(),
-			"gasUsed":           big.NewInt(int64(head.GasUsed)).Bytes(),
-			"timestamp":         head.Time.Bytes(),
-			"transactionsRoot":  head.TxHash.Bytes(),
-			"receiptsRoot":      head.ReceiptHash.Bytes(),
-			"transactionHashes": tHashes,
-			"uncleHashes": func() [][]byte {
-				uncles := make([][]byte, len(block.Uncles()))
-				for i, uncle := range block.Uncles() {
-					uncles[i] = uncle.Hash().Bytes()
-					e.InsertBlock(&BlockIn{
-						Block:       types.NewBlockWithHeader(uncle),
-						State:       blockIn.State,
-						IsUncle:     true,
-						UncleReward: blockIn.UncleRewardFunc(block.Uncles(), i),
-					})
-				}
-				return uncles
-			}(),
-			"isUncle":     blockIn.IsUncle,
-			"txFees":      txFees,
-			"blockReward": blockReward,
-			"uncleReward": uncleReward,
-		}
-		return bfields, nil
-	}
-
-	tHashes, tTxs, tLogs, tTrace := processTxs(blockIn.TxBlocks)
-	bm := newBlockMetrics(blockIn)
-	block, _ := formatBlock(blockIn.Block, tHashes)
-	blockMetadata, _ := formatBlockMetric(blockIn, blockIn.Block, bm)
-
-	if block["intNumber"] != 0 {
-		tTrace = append(tTrace, map[string]interface{}{
-			"hash":           block["hash"],
-			"blockHash":      block["hash"],
-			"blockNumber":    block["number"],
-			"blockIntNumber": block["intNumber"],
-			"trace": map[string]interface{}{
-				"isError": false,
-				"msg":     "",
-				"transfers": func() interface{} {
-					var dTraces []interface{}
-					dTraces = append(dTraces, map[string]interface{}{
-						"op":          "BLOCK",
-						"txFees":      block["txFees"],
-						"blockReward": block["blockReward"],
-						"uncleReward": block["uncleReward"],
-						"to":          block["miner"],
-						"type":        "REWARD",
-					})
-					return dTraces
-				}(),
-			},
+	// Send to Kafka
+	send := func() {
+		e.blocksW.WriteMessages(context.Background(), kafka.Message{
+			Key:   []byte("Key-A"),
+			Value: []byte("New block!"),
 		})
 	}
 
-	performSaveToDB := func() {
-		var wg sync.WaitGroup
-
-		saveToDB := func(table string, values interface{}) {
-			defer wg.Done()
-			if values == nil {
-				return
-			}
-
-			log.Info("InsertBlock - saveToDB", "table", table)
-
-			var err error
-			if table == DbTables["transactions"] && len(values.([]interface{})) > 0 {
-				log.Info("InsertBlock - saveToDB", "table", table, "len", len(values.([]interface{})))
-				_, err = r.DB(e.dbName).Table(DbTables[table]).Insert(values, r.InsertOpts{
-					Conflict:      "replace",
-					ReturnChanges: "always",
-				}).Field("changes").ForEach(func(change r.Term) interface{} {
-					return r.Branch(
-						change.Field("old_val"), change.Field("old_val").Field("pending").Branch(
-							r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(
-								func(post r.Term) interface{} {
-									return map[string]interface{}{"pendingTxs": post.Field("pendingTxs").Sub(1).Default(0)}
-								}), r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{})),
-						r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{}))
-				}).RunWrite(e.session)
-			} else {
-				_, err = r.DB(e.dbName).Table(DbTables[table]).Insert(values, r.InsertOpts{
-					Conflict: "replace",
-				}).RunWrite(e.session)
-			}
-
-			if err != nil {
-				panic(err)
-			}
-		}
-
-		updateNonceHashes := func() {
-			defer wg.Done()
-			for _, tx := range tTxs {
-				tx, ok := tx.(map[string]interface{})
-				if !ok {
-					panic(ok)
-				}
-
-				_, err := r.Expr(map[string]interface{}{"changes": make([]interface{}, 0)}).Merge(r.DB(e.dbName).Table(DbTables["transactions"]).GetAllByIndex("nonceHash", tx["nonceHash"]).Update(map[string]interface{}{"replacedBy": tx["hash"], "pending": false}, r.UpdateOpts{
-					ReturnChanges: true,
-				})).Field("changes").ForEach(func(change r.Term) interface{} {
-					return r.Branch(
-						change.Field("old_val"), change.Field("old_val").Field("pending").Branch(
-							r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(
-								func(post r.Term) interface{} {
-									return map[string]interface{}{"pendingTxs": post.Field("pendingTxs").Sub(1).Default(0)}
-								}), r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{})),
-						r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{}))
-				}).RunWrite(e.session)
-
-				if err != nil {
-					panic(err)
-				}
-			}
-		}
-
-		// Write first nonce hashes
-		wg.Add(1)
-		go updateNonceHashes()
-		wg.Wait()
-
-		// Write after transactions, logs and traces
-		wg.Add(3)
-		go saveToDB(DbTables["transactions"], tTxs)
-		go saveToDB(DbTables["logs"], tLogs)
-		go saveToDB(DbTables["traces"], tTrace)
-		wg.Wait()
-
-		// After that write blocks and blocks_metrics
-		wg.Add(2)
-		go saveToDB(DbTables["blocks"], block)
-		go saveToDB(DbTables["blocks_metrics"], blockMetadata)
-		wg.Wait()
-	}
-
-	go performSaveToDB()
+	go send()
 }
 
 // InsertPendingTx Validates and store pending tx into DB
@@ -684,82 +527,64 @@ func (e *EthVM) InsertPendingTxs(stateDb *state.StateDB, txs []*PendingTx) {
 		return
 	}
 
-	processTxs := func(stateDb *state.StateDB, pTxs []*PendingTx) chan []interface{} {
-		var (
-			c      = make(chan []interface{})
-			ts     = big.NewInt(time.Now().Unix())
-			ptxs   []interface{}
-			logs   []interface{}
-			traces []interface{}
-		)
+	//processTxs := func(stateDb *state.StateDB, pTxs []*PendingTx) chan []interface{} {
+	//	var (
+	//		c      = make(chan []interface{})
+	//		ts     = big.NewInt(time.Now().Unix())
+	//		ptxs   []interface{}
+	//		logs   []interface{}
+	//		traces []interface{}
+	//	)
+	//
+	//	go func() {
+	//		for _, pTx := range pTxs {
+	//			var tReceipts types.Receipts
+	//			txBlock := TxBlock{
+	//				Tx:        pTx.Tx,
+	//				Trace:     pTx.Trace,
+	//				Pending:   true,
+	//				Timestamp: ts,
+	//			}
+	//			var tBlockIn = &BlockIn{
+	//				Receipts: append(tReceipts, pTx.Receipt),
+	//				Block:    pTx.Block,
+	//				State:    pTx.State,
+	//				Signer:   pTx.Signer,
+	//			}
+	//			ttx, tlogs, ttrace := formatTx(tBlockIn, txBlock, 0)
+	//			if ttx != nil {
+	//				ptxs = append(ptxs, ttx)
+	//			}
+	//			if tlogs != nil {
+	//				logs = append(logs, tlogs)
+	//			}
+	//			if ttrace != nil {
+	//				traces = append(traces, ttrace)
+	//			}
+	//		}
+	//		var results []interface{}
+	//		results = append(results, ptxs)
+	//		results = append(results, logs)
+	//		results = append(results, traces)
+	//		c <- results
+	//	}()
+	//
+	//	return c
+	//}
+	//
+	//// Send to Kafka
+	//go func() {
+	//}()
 
-		go func() {
-			for _, pTx := range pTxs {
-				var tReceipts types.Receipts
-				txBlock := TxBlock{
-					Tx:        pTx.Tx,
-					Trace:     pTx.Trace,
-					Pending:   true,
-					Timestamp: ts,
-				}
-				var tBlockIn = &BlockIn{
-					Receipts: append(tReceipts, pTx.Receipt),
-					Block:    pTx.Block,
-					State:    pTx.State,
-					Signer:   pTx.Signer,
-				}
-				ttx, tlogs, ttrace := formatTx(tBlockIn, txBlock, 0)
-				if ttx != nil {
-					ptxs = append(ptxs, ttx)
-				}
-				if tlogs != nil {
-					logs = append(logs, tlogs)
-				}
-				if ttrace != nil {
-					traces = append(traces, ttrace)
-				}
-			}
-			var results []interface{}
-			results = append(results, ptxs)
-			results = append(results, logs)
-			results = append(results, traces)
-			c <- results
-		}()
-
-		return c
+	// Send to Kafka
+	send := func() {
+		e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+			Key:   []byte("Key-A"),
+			Value: []byte("New pending tx!"),
+		})
 	}
 
-	saveToDB := func(table string, values interface{}) {
-		if values == nil {
-			return
-		}
-
-		log.Info("InsertPendingTxs - saveToDB", "table", table)
-
-		result, err := r.DB(e.dbName).Table(DbTables[table]).Insert(values, r.InsertOpts{Conflict: func(id r.Term, oldDoc r.Term, newDoc r.Term) interface{} {
-			return newDoc
-		}}).RunWrite(e.session)
-		if err != nil {
-			panic(err)
-		}
-
-		if table == DbTables["transactions"] && result.Inserted > 0 {
-			r.DB(e.dbName).Table(DbTables["data"]).Get("cached").Update(map[string]interface{}{"pendingTxs": r.Row.Field("pendingTxs").Add(result.Inserted).Default(0)}).RunWrite(e.session)
-		}
-	}
-
-	// Start processing txs
-	pTxsCh := processTxs(stateDb, txs)
-	go func(pTxsCh chan []interface{}) {
-		select {
-		case v, _ := <-pTxsCh:
-			// Save processed results to DB
-			go saveToDB(DbTables["transactions"], v[0])
-			go saveToDB(DbTables["logs"], v[1])
-			go saveToDB(DbTables["traces"], v[2])
-			return
-		}
-	}(pTxsCh)
+	go send()
 }
 
 // RemovePendingTx Removes a pending transaction from the DB
@@ -770,15 +595,15 @@ func (e *EthVM) RemovePendingTx(hash common.Hash) {
 
 	log.Debug("RemovePendingTx - Removing pending tx", "hash", hash)
 
-	deleteFromDb := func(table string, hash common.Hash) {
-		f := map[string]interface{}{"hash": hash.Bytes()}
-		_, err := r.DB(e.dbName).Table(DbTables[table]).Filter(f).Delete().Run(e.session)
-		if err != nil {
-			panic(err)
-		}
+	// Send to Kafka
+	send := func() {
+		e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+			Key:   []byte("Key-A"),
+			Value: []byte("Remove pending tx!"),
+		})
 	}
 
-	go deleteFromDb(DbTables["transactions"], hash)
+	go send()
 }
 
 // ----------------
