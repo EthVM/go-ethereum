@@ -158,6 +158,8 @@ var (
 	ethVMFlags = []cli.Flag{
 		ethvm.EthVMFlag,
 		ethvm.EthVMBrokersFlag,
+		ethvm.EthVMBlocksTopicFlag,
+		ethvm.EthVMPendingTxsTopicFlag,
 	}
 )
 

@@ -875,7 +875,7 @@ func (bc *BlockChain) WriteBlockWithoutState(block *types.Block, td *big.Int) (e
 }
 
 // WriteBlockWithState writes the block and all associated state to the database.
-func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB, txBlocks *[]ethvm.TxBlock, txFees *big.Int) (status WriteStatus, err error) {
+func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB, txBlocks *[]ethvm.BlockTx, txFees *big.Int) (status WriteStatus, err error) {
 	bc.wg.Add(1)
 	defer bc.wg.Done()
 
@@ -909,14 +909,18 @@ func (bc *BlockChain) WriteBlockWithState(block *types.Block, receipts []*types.
 	// Gather tx data
 	td := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
 	signer := types.MakeSigner(bc.Config(), block.Header().Number)
-	blockReward := FrontierBlockReward
-	if bc.chainConfig.IsByzantium(block.Header().Number) {
-		blockReward = ByzantiumBlockReward
+
+	blockReward := CliqueBlockReward
+	if bc.chainConfig.Ethash != nil {
+		blockReward = FrontierBlockReward
+		if bc.chainConfig.IsByzantium(block.Header().Number) {
+			blockReward = ByzantiumBlockReward
+		}
 	}
 
 	// Add block information to ethvm
-	blockIn := ethvm.NewBlockIn(block, txBlocks, state, td, receipts, signer, txFees, blockReward)
-	ethvm.GetInstance().InsertBlock(blockIn)
+	blockIn := ethvm.NewBlockIn(block, txBlocks, td, receipts, signer, txFees, blockReward)
+	ethvm.GetInstance().InsertBlock(state, blockIn)
 
 	// If we're running an archive node, always flush
 	if bc.cacheConfig.Disabled {

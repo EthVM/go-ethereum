@@ -31,10 +31,9 @@ import (
 
 // Variables here to avoid mem allocations
 var (
+	CliqueBlockReward    = big.NewInt(0)     // Block reward in wei for successfully mining a block using clique
 	FrontierBlockReward  = big.NewInt(5e+18) // Block reward in wei for successfully mining a block
 	ByzantiumBlockReward = big.NewInt(3e+18) // Block reward in wei for successfully mining a block upward from Byzantium
-	big8                 = big.NewInt(8)
-	big32                = big.NewInt(32)
 )
 
 // StateProcessor is a basic Processor, which takes care of transitioning
@@ -63,7 +62,7 @@ func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consen
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
-func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (types.Receipts, []*types.Log, uint64, []ethvm.TxBlock, *big.Int, error) {
+func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (types.Receipts, []*types.Log, uint64, []ethvm.BlockTx, *big.Int, error) {
 	var (
 		receipts types.Receipts
 		usedGas  = new(uint64)
@@ -71,7 +70,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		allLogs  []*types.Log
 		gp       = new(GasPool).AddGas(block.GasLimit())
 		txFees   = big.NewInt(0)
-		txBlocks []ethvm.TxBlock
+		blockTxs []ethvm.BlockTx
 	)
 	// Mutate the the block and state according to any hard-fork specs
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
@@ -85,7 +84,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		if err != nil {
 			return nil, nil, 0, nil, nil, err
 		}
-		txBlocks = append(txBlocks, ethvm.TxBlock{
+		blockTxs = append(blockTxs, ethvm.BlockTx{
 			Tx:        tx,
 			Trace:     tResult,
 			Pending:   false,
@@ -96,7 +95,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles(), receipts)
-	return receipts, allLogs, *usedGas, txBlocks, txFees, nil
+	return receipts, allLogs, *usedGas, blockTxs, txFees, nil
 }
 
 // ApplyTransaction attempts to apply a transaction to the given state database

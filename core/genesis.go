@@ -32,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
-	"github.com/ethereum/go-ethereum/ethvm"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -285,10 +284,6 @@ func (g *Genesis) Commit(db ethdb.Database) (*types.Block, error) {
 		config = params.AllEthashProtocolChanges
 	}
 	rawdb.WriteChainConfig(db, block.Hash(), config)
-
-	// Store genesis block inside EthVM (if applies)
-	ethvm.GetInstance().InsertGenesisTrace(genAccount, block)
-
 	return block, nil
 }
 
