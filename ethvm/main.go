@@ -41,19 +41,19 @@ var (
 
 	// EthVMBrokersFlag Specifies a list of kafka brokers to connect
 	EthVMBrokersFlag = cli.StringFlag{
-		Name:  "ethvm.brokers",
+		Name:  "ethvm-brokers",
 		Usage: "Specifies a list of kafka brokers to connect",
 	}
 
 	// EthVMBlocksTopicFlag Name of the kafka block topic
 	EthVMBlocksTopicFlag = cli.StringFlag{
-		Name:  "ethvm.blocks-topic",
+		Name:  "ethvm-blocks-topic",
 		Usage: "Name of the kafka block topic",
 	}
 
 	// EthVMPendingTxsTopicFlag Name of the kafka pending txs topic
 	EthVMPendingTxsTopicFlag = cli.StringFlag{
-		Name:  "ethvm.ptxs-topic",
+		Name:  "ethvm-pending-txs-topic",
 		Usage: "Name of the kafka pending txs topic",
 	}
 
@@ -145,7 +145,7 @@ type PendingTx struct {
 	Receipt *types.Receipt
 }
 
-type blockie struct {
+type kblock struct {
 	Number            []byte        `json:"number"            gencodec:"required"`
 	Hash              []byte        `json:"hash"              gencodec:"required"`
 	ParentHash        []byte        `json:"parentHash"        gencodec:"required"`
@@ -174,6 +174,21 @@ type blockie struct {
 	BlockReward       []byte        `json:"blockReward"       gencodec:"required"`
 	UncleReward       []byte        `json:"uncleReward"       gencodec:"required"`
 }
+
+//type ktransaction struct {
+//}
+
+type klog struct {
+	Address []byte   `json:"address"  gencodec:"required"`
+	Topics  [][]byte `json:"topics"   gencodec:"required"`
+	Data    []byte   `json:"data"     gencodec:"required"`
+	TxHash  []byte   `json:"txHash"   gencodec:"required"`
+	TxIndex []byte   `json:"txIndex"  gencodec:"required"`
+	Index   []byte   `json:"index"    gencodec:"required"`
+	Removed bool     `json:"removed"  gencodec:"required"`
+}
+
+type ktraces struct{}
 
 // -----------------
 // Main EthVM struct
@@ -446,7 +461,7 @@ func marshalJSON(state *state.StateDB, in *BlockIn) ([]byte, error) {
 		return (new(big.Int).Add(block.Difficulty(), in.PrevTd)).Bytes()
 	}()
 
-	blockie := &blockie{
+	blockie := &kblock{
 		Number:           header.Number.Bytes(),
 		Hash:             header.Hash().Bytes(),
 		ParentHash:       header.Hash().Bytes(),
