@@ -20,16 +20,16 @@ import (
 	"math/big"
 	"time"
 
+	"context"
+	"encoding/json"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/segmentio/kafka-go"
 	"gopkg.in/urfave/cli.v1"
-	"context"
-	"encoding/json"
-	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 var (
@@ -571,7 +571,7 @@ func formatTx(state *state.StateDB, blockIn *BlockIn, txBlock BlockTx, index int
 		"logsBloom":         receipt.Bloom.Bytes(),
 		"gas":               big.NewInt(int64(tx.Gas())).Bytes(),
 		"gasPrice":          tx.GasPrice().Bytes(),
-		"hash":              tx.Hash().Bytes(),
+		"hash":              tx.Hash().Hex(),
 		"nonceHash":         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(tx.Nonce())).Bytes()).Bytes(),
 		"replacedBy":        make([]byte, 0),
 		"input":             tx.Data(),
