@@ -18,7 +18,6 @@ package ethvm
 
 import (
 	"math/big"
-	"time"
 
 	"context"
 	"encoding/json"
@@ -146,37 +145,34 @@ type PendingTx struct {
 }
 
 type kblock struct {
-	Number            []byte        `json:"number"            gencodec:"required"`
-	Hash              []byte        `json:"hash"              gencodec:"required"`
-	ParentHash        []byte        `json:"parentHash"        gencodec:"required"`
-	IsUncle           bool          `json:"isUncle"           gencodec:"required"`
-	Timestamp         []byte        `json:"timestamp"         gencodec:"required"`
-	Nonce             [8]byte       `json:"nonce"             gencodec:"required"`
-	MixHash           []byte        `json:"mixHash"           gencodec:"required"`
-	Sha3Uncles        []byte        `json:"sha3Uncles"        gencodec:"required"`
-	LogsBloom         []byte        `json:"logsBloom"         gencodec:"required"`
-	StateRoot         []byte        `json:"stateRoot"         gencodec:"required"`
-	Miner             []byte        `json:"miner"             gencodec:"required"`
-	Difficulty        []byte        `json:"difficulty"        gencodec:"required"`
-	TotalDifficulty   []byte        `json:"totalDifficulty"   gencodec:"required"`
-	ExtraData         []byte        `json:"extraData"         gencodec:"required"`
-	Size              []byte        `json:"size"              gencodec:"required"`
-	GasLimit          []byte        `json:"gasLimit"          gencodec:"required"`
-	GasUsed           []byte        `json:"gasUsed"           gencodec:"required"`
-	TransactionsRoot  []byte        `json:"transactionsRoot"  gencodec:"required"`
-	TransactionHashes []byte        `json:"transactionHashes" gencodec:"required"`
-	Transactions      []interface{} `json:"transactions"      gencodec:"required"`
-	ReceiptsRoot      []byte        `json:"receiptsRoot"      gencodec:"required"`
-	UncleHashes       [][]byte      `json:"uncleHashes"       gencodec:"required"`
-	Logs              []interface{} `json:"logs"              gencodec:"required"`
-	Traces            []interface{} `json:"traces"            gencodec:"required"`
-	TxsFees           []byte        `json:"txsFees"           gencodec:"required"`
-	BlockReward       []byte        `json:"blockReward"       gencodec:"required"`
-	UncleReward       []byte        `json:"uncleReward"       gencodec:"required"`
+	Number           []byte        `json:"number"            gencodec:"required"`
+	Hash             []byte        `json:"hash"              gencodec:"required"`
+	ParentHash       []byte        `json:"parentHash"        gencodec:"required"`
+	IsUncle          bool          `json:"isUncle"           gencodec:"required"`
+	Timestamp        []byte        `json:"timestamp"         gencodec:"required"`
+	Nonce            [8]byte       `json:"nonce"             gencodec:"required"`
+	MixHash          []byte        `json:"mixHash"           gencodec:"required"`
+	Sha3Uncles       []byte        `json:"sha3Uncles"        gencodec:"required"`
+	LogsBloom        []byte        `json:"logsBloom"         gencodec:"required"`
+	StateRoot        []byte        `json:"stateRoot"         gencodec:"required"`
+	TransactionsRoot []byte        `json:"transactionsRoot"  gencodec:"required"`
+	ReceiptsRoot     []byte        `json:"receiptsRoot"      gencodec:"required"`
+	Miner            []byte        `json:"miner"             gencodec:"required"`
+	Difficulty       []byte        `json:"difficulty"        gencodec:"required"`
+	TotalDifficulty  []byte        `json:"totalDifficulty"   gencodec:"required"`
+	ExtraData        []byte        `json:"extraData"         gencodec:"required"`
+	Size             []byte        `json:"size"              gencodec:"required"`
+	GasLimit         []byte        `json:"gasLimit"          gencodec:"required"`
+	GasUsed          []byte        `json:"gasUsed"           gencodec:"required"`
+	Transactions     []interface{} `json:"transactions"      gencodec:"required"`
+	UncleHashes      [][]byte      `json:"uncleHashes"       gencodec:"required"`
+	TxsFees          []byte        `json:"txsFees"           gencodec:"required"`
+	BlockReward      []byte        `json:"blockReward"       gencodec:"required"`
+	UncleReward      []byte        `json:"uncleReward"       gencodec:"required"`
 }
 
-//type ktransaction struct {
-//}
+type ktransaction struct {
+}
 
 type klog struct {
 	Address []byte   `json:"address"  gencodec:"required"`
@@ -188,7 +184,8 @@ type klog struct {
 	Removed bool     `json:"removed"  gencodec:"required"`
 }
 
-type ktraces struct{}
+type ktrace struct {
+}
 
 // -----------------
 // Main EthVM struct
@@ -285,7 +282,6 @@ func (e *EthVM) InsertBlock(state *state.StateDB, blockIn *BlockIn) {
 		}
 
 		err := e.blocksW.WriteMessages(context.Background(), kafka.Message{
-			Key:   blockIn.Block.Hash().Bytes(),
 			Value: b,
 		})
 		if err != nil {
@@ -310,73 +306,72 @@ func (e *EthVM) InsertPendingTxs(stateDb *state.StateDB, txs []*PendingTx) {
 		return
 	}
 
-	processTxs := func(state *state.StateDB, pendingTxs []*PendingTx) chan []interface{} {
-		var (
-			c      = make(chan []interface{})
-			ts     = big.NewInt(time.Now().Unix())
-			pTxs   []interface{}
-			logs   []interface{}
-			traces []interface{}
-		)
+	// processTxs := func(state *state.StateDB, pendingTxs []*PendingTx) chan []interface{} {
+	// 	var (
+	// 		c      = make(chan []interface{})
+	// 		ts     = big.NewInt(time.Now().Unix())
+	// 		pTxs   []interface{}
+	// 		logs   []interface{}
+	// 		traces []interface{}
+	// 	)
 
-		go func() {
-			for _, pTx := range pendingTxs {
-				var tReceipts types.Receipts
-				blockTx := BlockTx{
-					Tx:        pTx.Tx,
-					Trace:     pTx.Trace,
-					Pending:   true,
-					Timestamp: ts,
-				}
-				var tBlockIn = &BlockIn{
-					Receipts: append(tReceipts, pTx.Receipt),
-					Block:    pTx.Block,
-					Signer:   pTx.Signer,
-				}
-				ttx, tLogs, tTrace := formatTx(state, tBlockIn, blockTx, 0)
-				if ttx != nil {
-					pTxs = append(pTxs, ttx)
-				}
-				if tLogs != nil {
-					logs = append(logs, tLogs)
-				}
-				if tTrace != nil {
-					traces = append(traces, tTrace)
-				}
-			}
-			var results []interface{}
-			results = append(results, pTxs)
-			results = append(results, logs)
-			results = append(results, traces)
-			c <- results
-		}()
+	// 	go func() {
+	// 		for _, pTx := range pendingTxs {
+	// 			var tReceipts types.Receipts
+	// 			blockTx := BlockTx{
+	// 				Tx:        pTx.Tx,
+	// 				Trace:     pTx.Trace,
+	// 				Pending:   true,
+	// 				Timestamp: ts,
+	// 			}
+	// 			var tBlockIn = &BlockIn{
+	// 				Receipts: append(tReceipts, pTx.Receipt),
+	// 				Block:    pTx.Block,
+	// 				Signer:   pTx.Signer,
+	// 			}
+	// 			ttx, tLogs, tTrace := formatTx(state, tBlockIn, blockTx, 0)
+	// 			if ttx != nil {
+	// 				pTxs = append(pTxs, ttx)
+	// 			}
+	// 			if tLogs != nil {
+	// 				logs = append(logs, tLogs)
+	// 			}
+	// 			if tTrace != nil {
+	// 				traces = append(traces, tTrace)
+	// 			}
+	// 		}
+	// 		var results []interface{}
+	// 		results = append(results, pTxs)
+	// 		results = append(results, logs)
+	// 		results = append(results, traces)
+	// 		c <- results
+	// 	}()
 
-		return c
-	}
+	// 	return c
+	// }
 
 	// Send to Kafka
-	go func() {
-		pTxsChan := processTxs(stateDb, txs)
-		results := <-pTxsChan
+	// go func() {
+	// 	pTxsChan := processTxs(stateDb, txs)
+	// 	results := <-pTxsChan
 
-		pTxs := results[0].([]interface{})
-		for i, pTx := range pTxs {
-			key := txs[i]
+	// 	pTxs := results[0].([]interface{})
+	// 	for i, pTx := range pTxs {
+	// 		key := txs[i]
 
-			p, er := json.Marshal(pTx)
-			if er != nil {
-				panic(e)
-			}
+	// 		p, er := json.Marshal(pTx)
+	// 		if er != nil {
+	// 			panic(e)
+	// 		}
 
-			err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-				Key:   key.Tx.Hash().Bytes(),
-				Value: p,
-			})
-			if err != nil {
-				panic(err)
-			}
-		}
-	}()
+	// 		err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+	// 			Value: p,
+	// 		})
+	// 		if err != nil {
+	// 			panic(err)
+	// 		}
+	// 	}
+	// }()
 }
 
 // RemovePendingTx Removes a pending transaction from the DB
@@ -390,7 +385,6 @@ func (e *EthVM) RemovePendingTx(hash common.Hash) {
 	// Send to Kafka
 	go func() {
 		e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-			Key:   []byte("Key-A"),
 			Value: []byte("Remove pending tx!"),
 		})
 	}()
@@ -452,7 +446,7 @@ func marshalJSON(state *state.StateDB, in *BlockIn) ([]byte, error) {
 
 	block := in.Block
 	header := block.Header()
-	tHashes, tTxs, tLogs, tTrace := processTxs(in.BlockTxs)
+	tHashes, _, _, _ := processTxs(in.BlockTxs)
 	txFees, blockReward, uncleReward := calculateReward(in)
 	td := func() []byte {
 		if in.PrevTd == nil {
@@ -472,6 +466,8 @@ func marshalJSON(state *state.StateDB, in *BlockIn) ([]byte, error) {
 		Sha3Uncles:       header.UncleHash.Bytes(),
 		LogsBloom:        header.Bloom.Bytes(),
 		StateRoot:        header.Root.Bytes(),
+		TransactionsRoot: header.TxHash.Bytes(),
+		ReceiptsRoot:     header.ReceiptHash.Bytes(),
 		Miner:            header.Coinbase.Bytes(),
 		Difficulty:       header.Difficulty.Bytes(),
 		TotalDifficulty:  td,
@@ -479,17 +475,13 @@ func marshalJSON(state *state.StateDB, in *BlockIn) ([]byte, error) {
 		Size:             big.NewInt(int64(hexutil.Uint64(block.Size()))).Bytes(),
 		GasLimit:         big.NewInt(int64(header.GasLimit)).Bytes(),
 		GasUsed:          big.NewInt(int64(header.GasUsed)).Bytes(),
-		TransactionsRoot: header.TxHash.Bytes(),
-		Transactions:     tTxs,
-		ReceiptsRoot:     header.ReceiptHash.Bytes(),
 		UncleHashes:      tHashes,
-		Logs:             tLogs,
-		Traces:           tTrace,
 		TxsFees:          txFees,
 		BlockReward:      blockReward,
 		UncleReward:      uncleReward,
 
 		// TODO: Finish implementation
+		// Transactions:     tTxs,
 		//UncleHashes: func() [][]byte {
 		//	uncles := make([][]byte, len(block.Uncles()))
 		//	for i, uncle := range block.Uncles() {
