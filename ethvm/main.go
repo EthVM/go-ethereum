@@ -18,18 +18,18 @@ package ethvm
 
 import (
 	"math/big"
-	"time"
 
+	"context"
+	"encoding/json"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/segmentio/kafka-go"
 	"gopkg.in/urfave/cli.v1"
-	"context"
-	"encoding/json"
-	"github.com/ethereum/go-ethereum/common/hexutil"
+	"math"
 )
 
 var (
@@ -80,22 +80,218 @@ type BlockIn struct {
 	Block           *types.Block
 	BlockTxs        *[]BlockTx
 	PrevTd          *big.Int
-	Receipts        types.Receipts
 	Signer          types.Signer
 	IsUncle         bool
 	TxFees          *big.Int
 	BlockRewardFunc func(block *types.Block) (*big.Int, *big.Int)
 	UncleRewardFunc func(uncles []*types.Header, index int) *big.Int
 	UncleReward     *big.Int
+	Status          byte
+}
+
+func (in *BlockIn) marshalJSON(state *state.StateDB) ([]byte, error) {
+	processTxs := func(blockTxs *[]BlockTx) []kTransaction {
+		if blockTxs == nil {
+			return make([]kTransaction, 0)
+		}
+
+		kTxs := make([]kTransaction, len(*blockTxs))
+		for i, blockTx := range *blockTxs {
+			header := in.Block.Header()
+			tx := blockTx.Tx
+			receipt := blockTx.Receipt
+			if receipt == nil {
+				continue
+			}
+			signer := in.Signer
+			from, _ := types.Sender(signer, tx)
+			_v, _r, _s := tx.RawSignatureValues()
+			fromBalance := state.GetBalance(from)
+			to := func() []byte {
+				if tx.To() == nil {
+					return common.BytesToAddress(make([]byte, 1)).Bytes()
+				}
+				return tx.To().Bytes()
+			}()
+			toBalance := big.NewInt(0)
+			if tx.To() != nil {
+				toBalance = state.GetBalance(*tx.To())
+			}
+			value := tx.Value().Bytes()
+			input := tx.Data()
+
+			kTx := kTransaction{
+				Hash:              tx.Hash().Bytes(),
+				Root:              header.ReceiptHash.Bytes(),
+				Index:             big.NewInt(int64(i)).Bytes(),
+				Timestamp:         blockTx.Timestamp.Bytes(),
+				Nonce:             big.NewInt(int64(tx.Nonce())).Bytes(),
+				NonceHash:         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(tx.Nonce())).Bytes()).Bytes(),
+				From:              from.Bytes(),
+				FromBalance:       fromBalance.Bytes(),
+				To:                to,
+				ToBalance:         toBalance.Bytes(),
+				Input:             input,
+				Gas:               big.NewInt(int64(tx.Gas())).Bytes(),
+				GasPrice:          tx.GasPrice().Bytes(),
+				GasUsed:           big.NewInt(int64(receipt.GasUsed)).Bytes(),
+				CumulativeGasUsed: big.NewInt(int64(receipt.CumulativeGasUsed)).Bytes(),
+				ContractAddress: func() []byte {
+					if receipt.ContractAddress != (common.Address{}) {
+						return receipt.ContractAddress.Bytes()
+					}
+					return make([]byte, 0)
+				}(),
+				LogsBloom: receipt.Bloom.Bytes(),
+				Value:     value,
+				R:         (_r).Bytes(),
+				V:         (_v).Bytes(),
+				S:         (_s).Bytes(),
+				Status:    big.NewInt(int64(receipt.Status)).Bytes(),
+				Logs: func() []kLog {
+					var logs []kLog
+
+					rawLogs := receipt.Logs
+					if rawLogs == nil || len(rawLogs) == 0 {
+						return make([]kLog, 0)
+					}
+
+					for _, rawLog := range rawLogs {
+						if rawLog == nil {
+							continue
+						}
+						l := kLog{
+							Address: rawLog.Address.Bytes(),
+							Topics: func(rawTopics []common.Hash) [][]byte {
+								topics := make([][]byte, len(rawTopics))
+								for i, rawTopic := range rawTopics {
+									topics[i] = rawTopic.Bytes()
+								}
+								return topics
+							}(rawLog.Topics),
+							Data:    rawLog.Data,
+							Index:   big.NewInt(int64(rawLog.Index)).Bytes(),
+							Removed: rawLog.Removed,
+						}
+						logs = append(logs, l)
+					}
+
+					return logs
+				}(),
+				Trace: func() []byte {
+					getTxTransfer := func() []map[string]interface{} {
+						var dTraces []map[string]interface{}
+						dTraces = append(dTraces, map[string]interface{}{
+							"op":    "TX",
+							"from":  from.Bytes(),
+							"to":    to,
+							"value": value,
+							"input": input,
+						})
+						return dTraces
+					}
+
+					raw, ok := blockTx.Trace.(map[string]interface{})
+					if !ok {
+						raw = map[string]interface{}{
+							"isError": true,
+							"msg":     blockTx.Trace,
+						}
+					}
+					isError := raw["isError"].(bool)
+					transfers, ok := raw["transfers"].([]map[string]interface{})
+					if !isError && !ok {
+						raw["transfers"] = getTxTransfer()
+					} else {
+						raw["transfers"] = append(transfers, getTxTransfer()[0])
+					}
+					res, err := json.Marshal(raw)
+					if err != nil {
+						panic(err)
+					}
+					return res
+				}(),
+			}
+
+			kTxs = append(kTxs, kTx)
+		}
+
+		return kTxs
+	}
+	calculateReward := func(in *BlockIn) ([]byte, []byte, []byte) {
+		var (
+			txFees      []byte
+			blockReward []byte
+			uncleReward []byte
+		)
+		if in.TxFees != nil {
+			txFees = in.TxFees.Bytes()
+		} else {
+			txFees = make([]byte, 0)
+		}
+		if in.IsUncle {
+			blockReward = in.UncleReward.Bytes()
+			uncleReward = make([]byte, 0)
+		} else {
+			blockR, uncleR := in.BlockRewardFunc(in.Block)
+			blockReward, uncleReward = blockR.Bytes(), uncleR.Bytes()
+		}
+		return txFees, blockReward, uncleReward
+	}
+
+	block := in.Block
+	header := block.Header()
+	txs := processTxs(in.BlockTxs)
+	txFees, blockReward, uncleReward := calculateReward(in)
+	td := func() []byte {
+		if in.PrevTd == nil {
+			return make([]byte, 0)
+		}
+		return (new(big.Int).Add(block.Difficulty(), in.PrevTd)).Bytes()
+	}()
+
+	kBlock := &kBlock{
+		Number:           header.Number.Bytes(),
+		Hash:             header.Hash().Bytes(),
+		ParentHash:       header.Hash().Bytes(),
+		IsUncle:          in.IsUncle,
+		Timestamp:        header.Time.Bytes(),
+		Nonce:            header.Nonce,
+		MixHash:          header.MixDigest.Bytes(),
+		Sha3Uncles:       header.UncleHash.Bytes(),
+		LogsBloom:        header.Bloom.Bytes(),
+		StateRoot:        header.Root.Bytes(),
+		TransactionsRoot: header.TxHash.Bytes(),
+		ReceiptsRoot:     header.ReceiptHash.Bytes(),
+		Miner:            header.Coinbase.Bytes(),
+		Difficulty:       header.Difficulty.Bytes(),
+		TotalDifficulty:  td,
+		ExtraData:        header.Extra,
+		Size:             big.NewInt(int64(hexutil.Uint64(block.Size()))).Bytes(),
+		GasLimit:         big.NewInt(int64(header.GasLimit)).Bytes(),
+		GasUsed:          big.NewInt(int64(header.GasUsed)).Bytes(),
+		TxsFees:          txFees,
+		BlockReward:      blockReward,
+		UncleReward:      uncleReward,
+		Transactions:     txs,
+		Uncles: func() [][]byte {
+			uncles := make([][]byte, len(block.Uncles()))
+			for i, uncle := range block.Uncles() {
+				uncles[i] = uncle.Hash().Bytes()
+			}
+			return uncles
+		}(),
+	}
+
+	return json.Marshal(kBlock)
 }
 
 // NewBlockIn Creates and formats a new BlockIn instance
-func NewBlockIn(block *types.Block, txBlocks *[]BlockTx, td *big.Int, receipts []*types.Receipt, signer types.Signer, txFees *big.Int, blockReward *big.Int) *BlockIn {
+func NewBlockIn(block *types.Block, txBlocks *[]BlockTx, td *big.Int, signer types.Signer, txFees *big.Int, blockReward *big.Int, status byte) *BlockIn {
 	return &BlockIn{
 		Block:    block,
 		BlockTxs: txBlocks,
 		PrevTd:   td,
-		Receipts: receipts,
 		Signer:   signer,
 		IsUncle:  false,
 		TxFees:   txFees,
@@ -126,13 +322,15 @@ func NewBlockIn(block *types.Block, txBlocks *[]BlockTx, td *big.Int, receipts [
 			}
 			return big.NewInt(0)
 		},
+		Status: status,
 	}
 }
 
 type BlockTx struct {
 	Tx        *types.Transaction
 	Trace     interface{}
-	Pending   bool
+	Receipt   *types.Receipt
+	Logs      []*types.Log
 	Timestamp *big.Int
 }
 
@@ -145,50 +343,74 @@ type PendingTx struct {
 	Receipt *types.Receipt
 }
 
-type kblock struct {
-	Number            []byte        `json:"number"            gencodec:"required"`
-	Hash              []byte        `json:"hash"              gencodec:"required"`
-	ParentHash        []byte        `json:"parentHash"        gencodec:"required"`
-	IsUncle           bool          `json:"isUncle"           gencodec:"required"`
-	Timestamp         []byte        `json:"timestamp"         gencodec:"required"`
-	Nonce             [8]byte       `json:"nonce"             gencodec:"required"`
-	MixHash           []byte        `json:"mixHash"           gencodec:"required"`
-	Sha3Uncles        []byte        `json:"sha3Uncles"        gencodec:"required"`
-	LogsBloom         []byte        `json:"logsBloom"         gencodec:"required"`
-	StateRoot         []byte        `json:"stateRoot"         gencodec:"required"`
-	Miner             []byte        `json:"miner"             gencodec:"required"`
-	Difficulty        []byte        `json:"difficulty"        gencodec:"required"`
-	TotalDifficulty   []byte        `json:"totalDifficulty"   gencodec:"required"`
-	ExtraData         []byte        `json:"extraData"         gencodec:"required"`
-	Size              []byte        `json:"size"              gencodec:"required"`
-	GasLimit          []byte        `json:"gasLimit"          gencodec:"required"`
-	GasUsed           []byte        `json:"gasUsed"           gencodec:"required"`
-	TransactionsRoot  []byte        `json:"transactionsRoot"  gencodec:"required"`
-	TransactionHashes []byte        `json:"transactionHashes" gencodec:"required"`
-	Transactions      []interface{} `json:"transactions"      gencodec:"required"`
-	ReceiptsRoot      []byte        `json:"receiptsRoot"      gencodec:"required"`
-	UncleHashes       [][]byte      `json:"uncleHashes"       gencodec:"required"`
-	Logs              []interface{} `json:"logs"              gencodec:"required"`
-	Traces            []interface{} `json:"traces"            gencodec:"required"`
-	TxsFees           []byte        `json:"txsFees"           gencodec:"required"`
-	BlockReward       []byte        `json:"blockReward"       gencodec:"required"`
-	UncleReward       []byte        `json:"uncleReward"       gencodec:"required"`
+// ------------------
+// EthVM data structs
+// ------------------
+
+type kBlock struct {
+	Number           []byte         `json:"number"`
+	Hash             []byte         `json:"hash"`
+	ParentHash       []byte         `json:"parentHash"`
+	IsUncle          bool           `json:"isUncle"`
+	IsCanonical      bool           `json:"isCanonical"`
+	Timestamp        []byte         `json:"timestamp"`
+	Nonce            [8]byte        `json:"nonce"`
+	MixHash          []byte         `json:"mixHash"`
+	LogsBloom        []byte         `json:"logsBloom"`
+	StateRoot        []byte         `json:"stateRoot"`
+	TransactionsRoot []byte         `json:"transactionsRoot"`
+	ReceiptsRoot     []byte         `json:"receiptsRoot"`
+	Miner            []byte         `json:"miner"`
+	Difficulty       []byte         `json:"difficulty"`
+	TotalDifficulty  []byte         `json:"totalDifficulty"`
+	ExtraData        []byte         `json:"extraData"`
+	Size             []byte         `json:"size"`
+	GasLimit         []byte         `json:"gasLimit"`
+	GasUsed          []byte         `json:"gasUsed"`
+	Transactions     []kTransaction `json:"transactions"`
+	Uncles           [][]byte       `json:"uncles"`
+	Sha3Uncles       []byte         `json:"sha3Uncles"`
+	TxsFees          []byte         `json:"txsFees"`
+	BlockReward      []byte         `json:"blockReward"`
+	UncleReward      []byte         `json:"uncleReward"`
 }
 
-//type ktransaction struct {
-//}
-
-type klog struct {
-	Address []byte   `json:"address"  gencodec:"required"`
-	Topics  [][]byte `json:"topics"   gencodec:"required"`
-	Data    []byte   `json:"data"     gencodec:"required"`
-	TxHash  []byte   `json:"txHash"   gencodec:"required"`
-	TxIndex []byte   `json:"txIndex"  gencodec:"required"`
-	Index   []byte   `json:"index"    gencodec:"required"`
-	Removed bool     `json:"removed"  gencodec:"required"`
+type kTransaction struct {
+	Hash              []byte `json:"hash"`
+	Root              []byte `json:"root"`
+	Index             []byte `json:"index"`
+	Timestamp         []byte `json:"timestamp"`
+	Nonce             []byte `json:"nonce"`
+	NonceHash         []byte `json:"nonceHash"`
+	From              []byte `json:"from"`
+	FromBalance       []byte `json:"fromBalance"`
+	To                []byte `json:"to"`
+	ToBalance         []byte `json:"toBalance"`
+	Input             []byte `json:"input"`
+	ContractAddress   []byte `json:"contractAddress"`
+	Gas               []byte `json:"gas"`
+	GasPrice          []byte `json:"gasPrice"`
+	GasUsed           []byte `json:"gasUsed"`
+	CumulativeGasUsed []byte `json:"cumulativeGasUsed"`
+	LogsBloom         []byte `json:"logsBloom"`
+	Value             []byte `json:"value"`
+	V                 []byte `json:"v"`
+	R                 []byte `json:"r"`
+	S                 []byte `json:"s"`
+	Status            []byte `json:"status"`
+	Logs              []kLog `json:"logs"`
+	Trace             []byte `json:"trace"`
 }
 
-type ktraces struct{}
+type kLog struct {
+	Address []byte   `json:"address"`
+	Topics  [][]byte `json:"topics"`
+	Data    []byte   `json:"data"`
+	TxHash  []byte   `json:"txHash"`
+	TxIndex []byte   `json:"txIndex"`
+	Index   []byte   `json:"index"`
+	Removed bool     `json:"removed"`
+}
 
 // -----------------
 // Main EthVM struct
@@ -261,13 +483,15 @@ func (e *EthVM) Connect() {
 
 	// Create Kafka writers
 	e.blocksW = kafka.NewWriter(kafka.WriterConfig{
-		Brokers: []string{e.brokers},
-		Topic:   e.blocksTopic,
+		Brokers:       []string{e.brokers},
+		Topic:         e.blocksTopic,
+		QueueCapacity: math.MaxInt32,
 	})
 
 	e.pTxsW = kafka.NewWriter(kafka.WriterConfig{
-		Brokers: []string{e.brokers},
-		Topic:   e.pTxsTopic,
+		Brokers:       []string{e.brokers},
+		Topic:         e.pTxsTopic,
+		QueueCapacity: math.MaxInt32,
 	})
 }
 
@@ -279,13 +503,13 @@ func (e *EthVM) InsertBlock(state *state.StateDB, blockIn *BlockIn) {
 
 	// Send to Kafka
 	go func() {
-		b, er := marshalJSON(state, blockIn)
+		b, er := blockIn.marshalJSON(state)
 		if er != nil {
 			panic(er)
 		}
 
 		err := e.blocksW.WriteMessages(context.Background(), kafka.Message{
-			Key:   blockIn.Block.Hash().Bytes(),
+			Key:   []byte(hexutil.Encode(blockIn.Block.Header().Hash().Bytes())),
 			Value: b,
 		})
 		if err != nil {
@@ -310,73 +534,73 @@ func (e *EthVM) InsertPendingTxs(stateDb *state.StateDB, txs []*PendingTx) {
 		return
 	}
 
-	processTxs := func(state *state.StateDB, pendingTxs []*PendingTx) chan []interface{} {
-		var (
-			c      = make(chan []interface{})
-			ts     = big.NewInt(time.Now().Unix())
-			pTxs   []interface{}
-			logs   []interface{}
-			traces []interface{}
-		)
+	// processTxs := func(state *state.StateDB, pendingTxs []*PendingTx) chan []interface{} {
+	// 	var (
+	// 		c      = make(chan []interface{})
+	// 		ts     = big.NewInt(time.Now().Unix())
+	// 		pTxs   []interface{}
+	// 		logs   []interface{}
+	// 		traces []interface{}
+	// 	)
 
-		go func() {
-			for _, pTx := range pendingTxs {
-				var tReceipts types.Receipts
-				blockTx := BlockTx{
-					Tx:        pTx.Tx,
-					Trace:     pTx.Trace,
-					Pending:   true,
-					Timestamp: ts,
-				}
-				var tBlockIn = &BlockIn{
-					Receipts: append(tReceipts, pTx.Receipt),
-					Block:    pTx.Block,
-					Signer:   pTx.Signer,
-				}
-				ttx, tLogs, tTrace := formatTx(state, tBlockIn, blockTx, 0)
-				if ttx != nil {
-					pTxs = append(pTxs, ttx)
-				}
-				if tLogs != nil {
-					logs = append(logs, tLogs)
-				}
-				if tTrace != nil {
-					traces = append(traces, tTrace)
-				}
-			}
-			var results []interface{}
-			results = append(results, pTxs)
-			results = append(results, logs)
-			results = append(results, traces)
-			c <- results
-		}()
+	// 	go func() {
+	// 		for _, pTx := range pendingTxs {
+	// 			var tReceipts types.Receipts
+	// 			blockTx := BlockTx{
+	// 				Tx:        pTx.Tx,
+	// 				Trace:     pTx.Trace,
+	// 				Pending:   true,
+	// 				Timestamp: ts,
+	// 			}
+	// 			var tBlockIn = &BlockIn{
+	// 				Receipts: append(tReceipts, pTx.Receipt),
+	// 				Block:    pTx.Block,
+	// 				Signer:   pTx.Signer,
+	// 			}
+	// 			ttx, tLogs, tTrace := formatTx(state, tBlockIn, blockTx, 0)
+	// 			if ttx != nil {
+	// 				pTxs = append(pTxs, ttx)
+	// 			}
+	// 			if tLogs != nil {
+	// 				logs = append(logs, tLogs)
+	// 			}
+	// 			if tTrace != nil {
+	// 				traces = append(traces, tTrace)
+	// 			}
+	// 		}
+	// 		var results []interface{}
+	// 		results = append(results, pTxs)
+	// 		results = append(results, logs)
+	// 		results = append(results, traces)
+	// 		c <- results
+	// 	}()
 
-		return c
-	}
+	// 	return c
+	// }
 
 	// Send to Kafka
-	go func() {
-		pTxsChan := processTxs(stateDb, txs)
-		results := <-pTxsChan
+	// go func() {
+	// 	pTxsChan := processTxs(stateDb, txs)
+	// 	results := <-pTxsChan
 
-		pTxs := results[0].([]interface{})
-		for i, pTx := range pTxs {
-			key := txs[i]
+	// 	pTxs := results[0].([]interface{})
+	// 	for i, pTx := range pTxs {
+	// 		key := txs[i]
 
-			p, er := json.Marshal(pTx)
-			if er != nil {
-				panic(e)
-			}
+	// 		p, er := json.Marshal(pTx)
+	// 		if er != nil {
+	// 			panic(e)
+	// 		}
 
-			err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-				Key:   key.Tx.Hash().Bytes(),
-				Value: p,
-			})
-			if err != nil {
-				panic(err)
-			}
-		}
-	}()
+	// 		err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+	//			Key:   []byte(hexutil.Encode(key)),
+	// 			Value: p,
+	// 		})
+	// 		if err != nil {
+	// 			panic(err)
+	// 		}
+	// 	}
+	// }()
 }
 
 // RemovePendingTx Removes a pending transaction from the DB
@@ -390,261 +614,7 @@ func (e *EthVM) RemovePendingTx(hash common.Hash) {
 	// Send to Kafka
 	go func() {
 		e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-			Key:   []byte("Key-A"),
 			Value: []byte("Remove pending tx!"),
 		})
 	}()
-}
-
-// ----------------
-// Helper functions
-// ----------------
-
-func marshalJSON(state *state.StateDB, in *BlockIn) ([]byte, error) {
-	processTxs := func(blockTxs *[]BlockTx) ([][]byte, []interface{}, []interface{}, []interface{}) {
-		var (
-			tHashes [][]byte
-			tTxs    []interface{}
-			tLogs   []interface{}
-			tTrace  []interface{}
-		)
-		if blockTxs == nil {
-			return tHashes, tTxs, tLogs, tTrace
-		}
-
-		for i, blockTx := range *blockTxs {
-			_tTx, _tLogs, _tTrace := formatTx(state, in, blockTx, i)
-			tTxs = append(tTxs, _tTx)
-
-			if _tLogs["logs"] != nil {
-				tLogs = append(tLogs, _tLogs)
-			}
-
-			if _tTrace["trace"] != nil {
-				tTrace = append(tTrace, _tTrace)
-			}
-
-			tHashes = append(tHashes, blockTx.Tx.Hash().Bytes())
-		}
-
-		return tHashes, tTxs, tLogs, tTrace
-	}
-	calculateReward := func(in *BlockIn) ([]byte, []byte, []byte) {
-		var (
-			txFees      []byte
-			blockReward []byte
-			uncleReward []byte
-		)
-		if in.TxFees != nil {
-			txFees = in.TxFees.Bytes()
-		} else {
-			txFees = make([]byte, 0)
-		}
-		if in.IsUncle {
-			blockReward = in.UncleReward.Bytes()
-			uncleReward = make([]byte, 0)
-		} else {
-			blockR, uncleR := in.BlockRewardFunc(in.Block)
-			blockReward, uncleReward = blockR.Bytes(), uncleR.Bytes()
-		}
-		return txFees, blockReward, uncleReward
-	}
-
-	block := in.Block
-	header := block.Header()
-	tHashes, tTxs, tLogs, tTrace := processTxs(in.BlockTxs)
-	txFees, blockReward, uncleReward := calculateReward(in)
-	td := func() []byte {
-		if in.PrevTd == nil {
-			return make([]byte, 0)
-		}
-		return (new(big.Int).Add(block.Difficulty(), in.PrevTd)).Bytes()
-	}()
-
-	blockie := &kblock{
-		Number:           header.Number.Bytes(),
-		Hash:             header.Hash().Bytes(),
-		ParentHash:       header.Hash().Bytes(),
-		IsUncle:          in.IsUncle,
-		Timestamp:        header.Time.Bytes(),
-		Nonce:            header.Nonce,
-		MixHash:          header.MixDigest.Bytes(),
-		Sha3Uncles:       header.UncleHash.Bytes(),
-		LogsBloom:        header.Bloom.Bytes(),
-		StateRoot:        header.Root.Bytes(),
-		Miner:            header.Coinbase.Bytes(),
-		Difficulty:       header.Difficulty.Bytes(),
-		TotalDifficulty:  td,
-		ExtraData:        header.Extra,
-		Size:             big.NewInt(int64(hexutil.Uint64(block.Size()))).Bytes(),
-		GasLimit:         big.NewInt(int64(header.GasLimit)).Bytes(),
-		GasUsed:          big.NewInt(int64(header.GasUsed)).Bytes(),
-		TransactionsRoot: header.TxHash.Bytes(),
-		Transactions:     tTxs,
-		ReceiptsRoot:     header.ReceiptHash.Bytes(),
-		UncleHashes:      tHashes,
-		Logs:             tLogs,
-		Traces:           tTrace,
-		TxsFees:          txFees,
-		BlockReward:      blockReward,
-		UncleReward:      uncleReward,
-
-		// TODO: Finish implementation
-		//UncleHashes: func() [][]byte {
-		//	uncles := make([][]byte, len(block.Uncles()))
-		//	for i, uncle := range block.Uncles() {
-		//		uncles[i] = uncle.Hash().Bytes()
-		//		e.InsertBlock(state, &BlockIn{
-		//			Block:       types.NewBlockWithHeader(uncle),
-		//			IsUncle:     true,
-		//			UncleReward: blockIn.UncleRewardFunc(block.Uncles(), i),
-		//		})
-		//	}
-		//	return uncles
-		//}()
-	}
-
-	return json.Marshal(blockie)
-}
-
-func formatTx(state *state.StateDB, blockIn *BlockIn, txBlock BlockTx, index int) (interface{}, map[string]interface{}, map[string]interface{}) {
-	tx := txBlock.Tx
-	receipt := blockIn.Receipts[index]
-	if receipt == nil {
-		return nil, nil, nil
-	}
-
-	head := blockIn.Block.Header()
-	signer := blockIn.Signer
-	from, _ := types.Sender(signer, tx)
-	_v, _r, _s := tx.RawSignatureValues()
-	fromBalance := state.GetBalance(from)
-	toBalance := big.NewInt(0)
-	if tx.To() != nil {
-		toBalance = state.GetBalance(*tx.To())
-	}
-
-	formatTopics := func(topics []common.Hash) [][]byte {
-		arrTopics := make([][]byte, len(topics))
-		for i, topic := range topics {
-			arrTopics[i] = topic.Bytes()
-		}
-		return arrTopics
-	}
-
-	formatLogs := func(logs []*types.Log) interface{} {
-		dLogs := make([]interface{}, len(logs))
-		for i, l := range logs {
-			logFields := map[string]interface{}{
-				"address":     l.Address.Bytes(),
-				"topics":      formatTopics(l.Topics),
-				"data":        l.Data,
-				"blockNumber": big.NewInt(int64(l.BlockNumber)).Bytes(),
-				"txHash":      l.TxHash.Bytes(),
-				"txIndex":     big.NewInt(int64(l.TxIndex)).Bytes(),
-				"blockHash":   l.BlockHash.Bytes(),
-				"index":       big.NewInt(int64(l.Index)).Bytes(),
-				"removed":     l.Removed,
-			}
-			dLogs[i] = logFields
-		}
-		return dLogs
-	}
-
-	rFields := map[string]interface{}{
-		"root":             blockIn.Block.Header().ReceiptHash.Bytes(),
-		"blockHash":        blockIn.Block.Hash().Bytes(),
-		"blockNumber":      head.Number.Bytes(),
-		"transactionIndex": big.NewInt(int64(index)).Bytes(),
-		"from":             from.Bytes(),
-		"fromBalance":      fromBalance.Bytes(),
-		"to": func() []byte {
-			if tx.To() == nil {
-				return common.BytesToAddress(make([]byte, 1)).Bytes()
-			}
-			return tx.To().Bytes()
-		}(),
-		"toBalance":         toBalance.Bytes(),
-		"gasUsed":           big.NewInt(int64(receipt.GasUsed)).Bytes(),
-		"cumulativeGasUsed": big.NewInt(int64(receipt.CumulativeGasUsed)).Bytes(),
-		"contractAddress":   nil,
-		"logsBloom":         receipt.Bloom.Bytes(),
-		"gas":               big.NewInt(int64(tx.Gas())).Bytes(),
-		"gasPrice":          tx.GasPrice().Bytes(),
-		"hash":              tx.Hash().Bytes(),
-		"nonceHash":         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(tx.Nonce())).Bytes()).Bytes(),
-		"replacedBy":        make([]byte, 0),
-		"input":             tx.Data(),
-		"nonce":             big.NewInt(int64(tx.Nonce())).Bytes(),
-		"value":             tx.Value().Bytes(),
-		"v":                 (_v).Bytes(),
-		"r":                 (_r).Bytes(),
-		"s":                 (_s).Bytes(),
-		"status":            receipt.Status,
-		"pending":           txBlock.Pending,
-		"data":              tx.Data(),
-		"timestamp":         txBlock.Timestamp.Bytes(),
-	}
-
-	rLogs := map[string]interface{}{
-		"hash":        tx.Hash().Bytes(),
-		"blockHash":   blockIn.Block.Hash().Bytes(),
-		"blockNumber": head.Number.Bytes(),
-		"logs":        formatLogs(receipt.Logs),
-	}
-
-	getTxTransfer := func() []map[string]interface{} {
-		var dTraces []map[string]interface{}
-		dTraces = append(dTraces, map[string]interface{}{
-			"op":    "TX",
-			"from":  rFields["from"],
-			"to":    rFields["to"],
-			"value": rFields["value"],
-			"input": rFields["input"],
-		})
-		return dTraces
-	}
-
-	rTrace := map[string]interface{}{
-		"hash":        tx.Hash().Bytes(),
-		"blockHash":   blockIn.Block.Hash().Bytes(),
-		"blockNumber": head.Number.Bytes(),
-		"trace": func() interface{} {
-			temp, ok := txBlock.Trace.(map[string]interface{})
-			if !ok {
-				temp = map[string]interface{}{
-					"isError": true,
-					"msg":     txBlock.Trace,
-				}
-			}
-			isError := temp["isError"].(bool)
-			transfers, ok := temp["transfers"].([]map[string]interface{})
-			if !isError && !ok {
-				temp["transfers"] = getTxTransfer()
-			} else {
-				temp["transfers"] = append(transfers, getTxTransfer()[0])
-			}
-			return temp
-		}(),
-	}
-
-	if len(receipt.Logs) == 0 {
-		rLogs["logs"] = nil
-		rFields["logsBloom"] = nil
-	}
-
-	// If the ContractAddress is 20 0x0 bytes, assume it is not a contract creation
-	if receipt.ContractAddress != (common.Address{}) {
-		rFields["contractAddress"] = receipt.ContractAddress
-	}
-
-	arr := make([]interface{}, 2)
-	if tx.To() == nil {
-		arr[0] = rFields["contractAddress"]
-	} else {
-		arr[0] = rFields["to"]
-	}
-	arr[1] = rFields["from"]
-
-	return rFields, rLogs, rTrace
 }

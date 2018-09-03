@@ -79,7 +79,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		statedb.Prepare(tx.Hash(), block.Hash(), i)
-		receipt, _, tResult, err := TraceApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, usedGas, cfg)
+		receipt, _, tResult, err := TraceApplyTransaction(p.config, p.bc, nil, gp, statedb, header, tx, usedGas)
 		txFees.Add(txFees, new(big.Int).Mul(big.NewInt(int64(receipt.GasUsed)), tx.GasPrice()))
 		if err != nil {
 			return nil, nil, 0, nil, nil, err
@@ -87,7 +87,8 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		blockTxs = append(blockTxs, ethvm.BlockTx{
 			Tx:        tx,
 			Trace:     tResult,
-			Pending:   false,
+			Receipt:   receipt,
+			Logs:      receipt.Logs,
 			Timestamp: block.Header().Time,
 		})
 		receipts = append(receipts, receipt)
@@ -146,7 +147,7 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
 // Also adds a JavaScriptTracer that scans for metadata inside the executed txs
-func TraceApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config) (*types.Receipt, uint64, interface{}, error) {
+func TraceApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, interface{}, error) {
 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
 	if err != nil {
 		return nil, 0, nil, err
