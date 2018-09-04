@@ -30,6 +30,7 @@ import (
 	"github.com/segmentio/kafka-go"
 	"gopkg.in/urfave/cli.v1"
 	"math"
+	"bytes"
 )
 
 var (
@@ -72,6 +73,14 @@ var (
 	instance *EthVM
 )
 
+// ----------
+// Generators
+// ----------
+
+// Make sure you have installed gogen-avro: https://github.com/actgardner/gogen-avro
+
+//go:generate $GOPATH/bin/gogen-avro --package=ethvm . block.avsc
+
 // ------------------
 // EthVM data structs
 // ------------------
@@ -82,6 +91,7 @@ type BlockIn struct {
 	PrevTd          *big.Int
 	Signer          types.Signer
 	IsUncle         bool
+	IsCanonical     bool
 	TxFees          *big.Int
 	BlockRewardFunc func(block *types.Block) (*big.Int, *big.Int)
 	UncleRewardFunc func(uncles []*types.Header, index int) *big.Int
@@ -284,6 +294,79 @@ func (in *BlockIn) marshalJSON(state *state.StateDB) ([]byte, error) {
 	}
 
 	return json.Marshal(kBlock)
+}
+
+func (in *BlockIn) marshallAVRO(state *state.StateDB) []byte {
+	calculateReward := func(in *BlockIn) (int64, int64, int64) {
+		var (
+			txFees      int64
+			blockReward int64
+			uncleReward int64
+		)
+
+		if in.TxFees != nil {
+			txFees = in.TxFees.Int64()
+		} else {
+			txFees = big0.Int64()
+		}
+
+		if in.IsUncle {
+			blockReward = in.UncleReward.Int64()
+			uncleReward = big0.Int64()
+		} else {
+			blockR, uncleR := in.BlockRewardFunc(in.Block)
+			blockReward, uncleReward = blockR.Int64(), uncleR.Int64()
+		}
+
+		return txFees, blockReward, uncleReward
+	}
+
+	block := in.Block
+	header := block.Header()
+	td := func() int64 {
+		if in.PrevTd == nil {
+			return big0.Int64()
+		}
+		return (new(big.Int).Add(block.Difficulty(), in.PrevTd)).Int64()
+	}()
+	txFees, blockReward, uncleReward := calculateReward(in)
+
+	avroBlock := &Block{
+		Number:           header.Number.Int64(),
+		Hash:             header.Hash().Hex(),
+		ParentHash:       header.Hash().Hex(),
+		MixDigest:        header.MixDigest.Hex(),
+		IsUncle:          in.IsUncle,
+		IsCanonical:      in.IsCanonical,
+		Timestamp:        header.Time.Int64(),
+		Nonce:            int64(header.Nonce.Uint64()),
+		Sha3Uncles:       header.UncleHash.Hex(),
+		LogsBloom:        hexutil.Encode(header.Bloom.Bytes()),
+		StateRoot:        hexutil.Encode(header.Root.Bytes()),
+		TransactionsRoot: hexutil.Encode(header.ReceiptHash.Bytes()),
+		Miner:            header.Coinbase.Hex(),
+		Difficulty:       header.Difficulty.Int64(),
+		TotalDifficulty:  td,
+		ExtraData:        header.Extra,
+		Size:             int64(hexutil.Uint64(block.Size())),
+		GasLimit:         int64(header.GasLimit),
+		GasUsed:          int64(header.GasUsed),
+		TxsFees:          txFees,
+		BlockReward:      blockReward,
+		UncleReward:      uncleReward,
+		Uncles: func() []string {
+			uncles := make([]string, len(block.Uncles()))
+			for i, uncle := range block.Uncles() {
+				uncles[i] = uncle.Hash().Hex()
+			}
+			return uncles
+		}(),
+	}
+
+	var buf bytes.Buffer
+	avroBlock.Serialize(&buf)
+
+	return buf.Bytes()
 }
 
 // NewBlockIn Creates and formats a new BlockIn instance
@@ -503,14 +586,9 @@ func (e *EthVM) InsertBlock(state *state.StateDB, blockIn *BlockIn) {
 
 	// Send to Kafka
 	go func() {
-		b, er := blockIn.marshalJSON(state)
-		if er != nil {
-			panic(er)
-		}
-
 		err := e.blocksW.WriteMessages(context.Background(), kafka.Message{
 			Key:   []byte(hexutil.Encode(blockIn.Block.Header().Hash().Bytes())),
-			Value: b,
+			Value: blockIn.marshallAVRO(state),
 		})
 		if err != nil {
 			panic(err)
