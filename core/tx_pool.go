@@ -28,7 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-		"github.com/ethereum/go-ethereum/ethvm"
+	"github.com/ethereum/go-ethereum/ethvm"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -805,14 +805,7 @@ func (pool *TxPool) addTx(tx *types.Transaction, local bool) error {
 
 	// Format pending tx
 	receipt, _, tResult, _ := TraceApplyTransaction(pool.chainconfig, pool.chain.(*BlockChain), nil, gp, copyState, pool.chain.CurrentBlock().Header(), tx, totalUsedGas)
-	ptx := &ethvm.PendingTx{
-		Tx:      tx,
-		Trace:   tResult,
-		State:   copyState,
-		Signer:  pool.signer,
-		Receipt: receipt,
-		Block:   pool.chain.CurrentBlock(),
-	}
+	ptx := ethvm.NewPendingTx(tx, tResult, pool.signer, receipt)
 
 	// Store validated pending txs into Ethvm
 	ethvm.GetInstance().InsertPendingTx(copyState, ptx)
@@ -852,14 +845,7 @@ func (pool *TxPool) addTxsLocked(txs []*types.Transaction, local bool) []error {
 			)
 
 			receipt, _, tResult, _ := TraceApplyTransaction(pool.chainconfig, pool.chain.(*BlockChain), nil, gp, copyState, pool.chain.CurrentBlock().Header(), tx, totalUsedGas)
-			ptxs = append(ptxs, &ethvm.PendingTx{
-				Tx:      tx,
-				Trace:   tResult,
-				State:   copyState,
-				Signer:  pool.signer,
-				Receipt: receipt,
-				Block:   pool.chain.CurrentBlock(),
-			})
+			ptxs = append(ptxs, ethvm.NewPendingTx(tx, tResult, pool.signer, receipt))
 		}
 	}
 	// Only reprocess the internal state if something was actually added
