@@ -158,7 +158,7 @@ func (in *BlockIn) bytes(state *state.StateDB) []byte {
 		getTxTransfer := func() []map[string]interface{} {
 			var dTraces []map[string]interface{}
 			dTraces = append(dTraces, map[string]interface{}{
-				"op":    "TX",
+				"op": "TX",
 				//"from":  from.Bytes(),
 				//"to":    to,
 				//"value": value,
@@ -489,15 +489,13 @@ func (e *EthVM) InsertBlock(state *state.StateDB, blockIn *BlockIn) {
 	}
 
 	// Send to Kafka
-	go func() {
-		err := e.blocksW.WriteMessages(context.Background(), kafka.Message{
-			Key:   []byte(hexutil.Encode(blockIn.Block.Header().Hash().Bytes())),
-			Value: blockIn.bytes(state),
-		})
-		if err != nil {
-			panic(err)
-		}
-	}()
+	err := e.blocksW.WriteMessages(context.Background(), kafka.Message{
+		Key:   []byte(hexutil.Encode(blockIn.Block.Header().Hash().Bytes())),
+		Value: blockIn.bytes(state),
+	})
+	if err != nil {
+		panic(err)
+	}
 }
 
 // InsertPendingTx Validates and store pending tx into DB
@@ -592,9 +590,7 @@ func (e *EthVM) RemovePendingTx(hash common.Hash) {
 	}
 
 	// Send to Kafka
-	//go func() {
-	//	e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-	//		Value: []byte("Remove pending tx!"),
-	//	})
-	//}()
+	//e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+	//	Value: []byte("Remove pending tx!"),
+	//})
 }
