@@ -27,8 +27,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/segmentio/kafka-go"
 	"gopkg.in/urfave/cli.v1"
-	"math"
 	"bytes"
+	"encoding/binary"
 )
 
 var (
@@ -98,191 +98,6 @@ type BlockIn struct {
 }
 
 func (in *BlockIn) bytes(state *state.StateDB) []byte {
-	calculateReward := func(in *BlockIn) (int64, int64, int64) {
-		var (
-			txFees      int64
-			blockReward int64
-			uncleReward int64
-		)
-
-		if in.TxFees != nil {
-			txFees = in.TxFees.Int64()
-		} else {
-			txFees = big0.Int64()
-		}
-
-		if in.IsUncle {
-			blockReward = in.UncleReward.Int64()
-			uncleReward = big0.Int64()
-		} else {
-			blockR, uncleR := in.BlockRewardFunc(in.Block)
-			blockReward, uncleReward = blockR.Int64(), uncleR.Int64()
-		}
-
-		return txFees, blockReward, uncleReward
-	}
-	processTopics := func(rawTopics []common.Hash) []string {
-		topics := make([]string, len(rawTopics))
-		for i, rawTopic := range rawTopics {
-			topics[i] = rawTopic.Hex()
-		}
-		return topics
-	}
-	processLogs := func(receipt *types.Receipt) []*Log {
-		rawLogs := receipt.Logs
-		if rawLogs == nil || len(rawLogs) == 0 {
-			return make([]*Log, 0)
-		}
-
-		var logs []*Log
-		for _, rawLog := range rawLogs {
-			if rawLog == nil {
-				continue
-			}
-
-			log := &Log{
-				Address: rawLog.Address.Hex(),
-				Topics:  processTopics(rawLog.Topics),
-				Data:    rawLog.Data,
-				Index:   int32(rawLog.Index),
-				Removed: rawLog.Removed,
-			}
-
-			logs = append(logs, log)
-		}
-
-		return logs
-	}
-	processTrace := func(blockTx BlockTx) *Trace {
-		// TODO: Finish implementation
-		getTxTransfer := func() []map[string]interface{} {
-			var dTraces []map[string]interface{}
-			dTraces = append(dTraces, map[string]interface{}{
-				"op": "TX",
-				//"from":  from.Bytes(),
-				//"to":    to,
-				//"value": value,
-				//"input": input,
-			})
-			return dTraces
-		}
-
-		raw, ok := blockTx.Trace.(map[string]interface{})
-		if !ok {
-			raw = map[string]interface{}{
-				"isError": true,
-				"msg":     blockTx.Trace,
-			}
-		}
-
-		isError := raw["isError"].(bool)
-		transfers, ok := raw["transfers"].([]map[string]interface{})
-		if !isError && !ok {
-			raw["transfers"] = getTxTransfer()
-		} else {
-			raw["transfers"] = append(transfers, getTxTransfer()[0])
-		}
-
-		return &Trace{
-			IsError: func() bool {
-				return raw["isError"].(bool)
-			}(),
-			Msg: func() string {
-				return raw["msg"].(string)
-			}(),
-			Transfers: func() []*Transfer {
-				return make([]*Transfer, 0)
-			}(),
-		}
-	}
-	processTxs := func(blockTxs *[]BlockTx) []*Transaction {
-		if in == nil {
-			return make([]*Transaction, 0)
-		}
-
-		var txs []*Transaction
-		for i, blockTx := range *blockTxs {
-			header := in.Block.Header()
-			rawTx := blockTx.Tx
-			receipt := blockTx.Receipt
-			if receipt == nil {
-				continue
-			}
-			signer := in.Signer
-			from, _ := types.Sender(signer, rawTx)
-			_v, _r, _s := rawTx.RawSignatureValues()
-			fromBalance := state.GetBalance(from)
-			to := func() UnionNullString {
-				if rawTx.To() == nil {
-					return UnionNullString{
-						UnionType: UnionNullStringTypeEnumNull,
-					}
-				}
-				to := rawTx.To().Hex()
-				return UnionNullString{
-					String:    to,
-					UnionType: UnionNullStringTypeEnumString,
-				}
-			}()
-			toBalance := func() UnionNullLong {
-				if rawTx.To() == nil {
-					return UnionNullLong{
-						UnionType: UnionNullLongTypeEnumNull,
-					}
-				}
-				toBalance := state.GetBalance(*rawTx.To()).Int64()
-				return UnionNullLong{
-					Long:      toBalance,
-					UnionType: UnionNullLongTypeEnumLong,
-				}
-			}
-			value := rawTx.Value()
-			input := rawTx.Data()
-			contractAddress := func() UnionNullString {
-				if receipt.ContractAddress == (common.Address{}) {
-					return UnionNullString{
-						UnionType: UnionNullStringTypeEnumNull,
-					}
-				}
-				return UnionNullString{
-					String:    receipt.ContractAddress.Hex(),
-					UnionType: UnionNullStringTypeEnumString,
-				}
-			}()
-
-			tx := &Transaction{
-				Hash:              rawTx.Hash().Hex(),
-				Root:              header.ReceiptHash.Hex(),
-				Index:             int32(i),
-				Timestamp:         blockTx.Timestamp.Int64(),
-				Nonce:             int64(rawTx.Nonce()),
-				NonceHash:         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(rawTx.Nonce())).Bytes()).Hex(),
-				From:              from.Hex(),
-				FromBalance:       fromBalance.Int64(),
-				To:                to,
-				ToBalance:         toBalance(),
-				Input:             input,
-				Gas:               int64(rawTx.Gas()),
-				GasPrice:          rawTx.GasPrice().Int64(),
-				GasUsed:           int64(receipt.GasUsed),
-				CumulativeGasUsed: int64(receipt.CumulativeGasUsed),
-				ContractAddress:   contractAddress,
-				LogsBloom:         receipt.Bloom.Bytes(),
-				Value:             value.Int64(),
-				R:                 _r.Bytes(),
-				V:                 _v.Bytes(),
-				S:                 _s.Bytes(),
-				Status:            int64(receipt.Status),
-				Logs:              processLogs(receipt),
-				Trace:             processTrace(blockTx),
-			}
-
-			txs = append(txs, tx)
-		}
-
-		return txs
-	}
-
 	block := in.Block
 	header := block.Header()
 	td := func() int64 {
@@ -291,8 +106,8 @@ func (in *BlockIn) bytes(state *state.StateDB) []byte {
 		}
 		return (new(big.Int).Add(block.Difficulty(), in.PrevTd)).Int64()
 	}()
-	txFees, blockReward, uncleReward := calculateReward(in)
-	txs := processTxs(in.BlockTxs)
+	txFees, blockReward, uncleReward := calculateBlockReward(in)
+	txs := processBlockTxs(state, in)
 
 	b := &Block{
 		Number:           header.Number.Int64(),
@@ -327,10 +142,31 @@ func (in *BlockIn) bytes(state *state.StateDB) []byte {
 		UncleReward: uncleReward,
 	}
 
+	// Encode as Kafka requirements
+	buffer := &bytes.Buffer{}
+
+	// 1) Magic bytes
+	_, err := buffer.Write([]byte{0})
+	if err != nil {
+		panic(err)
+	}
+
+	// 2) Id, in our case 1
+	idSlice := make([]byte, 4)
+	binary.BigEndian.PutUint32(idSlice, uint32(1))
+	_, err = buffer.Write(idSlice)
+	if err != nil {
+		panic(err)
+	}
+
+	// 3) Encode data
 	var buf bytes.Buffer
 	b.Serialize(&buf)
 
-	return buf.Bytes()
+	// Append to main buffer
+	buffer.Write(buf.Bytes())
+
+	return buffer.Bytes()
 }
 
 // NewBlockIn Creates and formats a new BlockIn struct
@@ -373,21 +209,56 @@ func NewBlockIn(block *types.Block, txBlocks *[]BlockTx, td *big.Int, signer typ
 	}
 }
 
-type PendingTx struct {
+type PendingTxIn struct {
 	Tx      *types.Transaction
 	Trace   interface{}
 	Signer  types.Signer
 	Receipt *types.Receipt
+	Action  Action
 }
 
-//func (pTx *PendingTx) bytes(state *state.StateDB) [] {}
+func pendingTxBytes(ptx PendingTxs) []byte {
+	// Encode as Kafka requirements
+	buffer := &bytes.Buffer{}
 
-func NewPendingTx(tx *types.Transaction, trace interface{}, signer types.Signer, receipt *types.Receipt) *PendingTx {
-	return &PendingTx{
+	// 1) Magic bytes
+	_, err := buffer.Write([]byte{0})
+	if err != nil {
+		panic(err)
+	}
+
+	// 2) Id, in our case 1
+	idSlice := make([]byte, 4)
+	binary.BigEndian.PutUint32(idSlice, uint32(1))
+	_, err = buffer.Write(idSlice)
+	if err != nil {
+		panic(err)
+	}
+
+	// 3) Encode data
+	var buf bytes.Buffer
+	ptx.Serialize(&buf)
+
+	// Append to main buffer
+	buffer.Write(buf.Bytes())
+
+	return buf.Bytes()
+}
+
+func NewPendingTxIn(tx *types.Transaction, trace interface{}, signer types.Signer, receipt *types.Receipt, action Action) *PendingTxIn {
+	return &PendingTxIn{
 		Tx:      tx,
 		Trace:   trace,
 		Signer:  signer,
 		Receipt: receipt,
+		Action:  action,
+	}
+}
+
+func UpdatePendingTxIn(tx *types.Transaction, action Action) *PendingTxIn {
+	return &PendingTxIn{
+		Tx:     tx,
+		Action: action,
 	}
 }
 
@@ -470,15 +341,13 @@ func (e *EthVM) Connect() {
 
 	// Create Kafka writers
 	e.blocksW = kafka.NewWriter(kafka.WriterConfig{
-		Brokers:       []string{e.brokers},
-		Topic:         e.blocksTopic,
-		QueueCapacity: math.MaxInt32,
+		Brokers: []string{e.brokers},
+		Topic:   e.blocksTopic,
 	})
 
 	e.pTxsW = kafka.NewWriter(kafka.WriterConfig{
-		Brokers:       []string{e.brokers},
-		Topic:         e.pTxsTopic,
-		QueueCapacity: math.MaxInt32,
+		Brokers: []string{e.brokers},
+		Topic:   e.pTxsTopic,
 	})
 }
 
@@ -499,98 +368,336 @@ func (e *EthVM) InsertBlock(state *state.StateDB, blockIn *BlockIn) {
 }
 
 // InsertPendingTx Validates and store pending tx into DB
-func (e *EthVM) InsertPendingTx(stateDb *state.StateDB, tx *PendingTx) {
+func (e *EthVM) InsertPendingTx(stateDb *state.StateDB, tx *PendingTxIn) {
 	if !e.isEnabled() {
 		return
 	}
 
-	pTxs := []*PendingTx{tx}
+	pTxs := []*PendingTxIn{tx}
 	e.InsertPendingTxs(stateDb, pTxs)
 }
 
 // InsertPendingTxs Validates and store pending txs into DB
-func (e *EthVM) InsertPendingTxs(stateDb *state.StateDB, txs []*PendingTx) {
+func (e *EthVM) InsertPendingTxs(state *state.StateDB, pTxs []*PendingTxIn) {
 	if !e.isEnabled() {
 		return
 	}
 
-	// processTxs := func(state *state.StateDB, pendingTxs []*PendingTx) chan []interface{} {
-	// 	var (
-	// 		c      = make(chan []interface{})
-	// 		ts     = big.NewInt(time.Now().Unix())
-	// 		pTxs   []interface{}
-	// 		logs   []interface{}
-	// 		traces []interface{}
-	// 	)
-
-	// 	go func() {
-	// 		for _, pTx := range pendingTxs {
-	// 			var tReceipts types.Receipts
-	// 			blockTx := BlockTx{
-	// 				Tx:        pTx.Tx,
-	// 				Trace:     pTx.Trace,
-	// 				Pending:   true,
-	// 				Timestamp: ts,
-	// 			}
-	// 			var tBlockIn = &BlockIn{
-	// 				Receipts: append(tReceipts, pTx.Receipt),
-	// 				Block:    pTx.Block,
-	// 				Signer:   pTx.Signer,
-	// 			}
-	// 			ttx, tLogs, tTrace := formatTx(state, tBlockIn, blockTx, 0)
-	// 			if ttx != nil {
-	// 				pTxs = append(pTxs, ttx)
-	// 			}
-	// 			if tLogs != nil {
-	// 				logs = append(logs, tLogs)
-	// 			}
-	// 			if tTrace != nil {
-	// 				traces = append(traces, tTrace)
-	// 			}
-	// 		}
-	// 		var results []interface{}
-	// 		results = append(results, pTxs)
-	// 		results = append(results, logs)
-	// 		results = append(results, traces)
-	// 		c <- results
-	// 	}()
-
-	// 	return c
-	// }
-
-	// Send to Kafka
-	// go func() {
-	// 	pTxsChan := processTxs(stateDb, txs)
-	// 	results := <-pTxsChan
-
-	// 	pTxs := results[0].([]interface{})
-	// 	for i, pTx := range pTxs {
-	// 		key := txs[i]
-
-	// 		p, er := json.Marshal(pTx)
-	// 		if er != nil {
-	// 			panic(e)
-	// 		}
-
-	// 		err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-	//			Key:   []byte(hexutil.Encode(key)),
-	// 			Value: p,
-	// 		})
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 	}
-	// }()
+	// Send to kafka
+	err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+		Value: pendingTxBytes(processInsertionPendingTxs(state, pTxs)),
+	})
+	if err != nil {
+		panic(err)
+	}
 }
 
-// RemovePendingTx Removes a pending transaction from the DB
-func (e *EthVM) RemovePendingTx(hash common.Hash) {
+// RemovePendingTxs Removes a pending transaction from the DB
+func (e *EthVM) RemovePendingTx(pTx *PendingTxIn) {
+	if !e.isEnabled() {
+		return
+	}
+
+	pTxs := []*PendingTxIn{pTx}
+	e.RemovePendingTxs(pTxs)
+}
+
+// RemovePendingTxs Removes a pending transaction from the DB
+func (e *EthVM) RemovePendingTxs(pTxs []*PendingTxIn) {
 	if !e.isEnabled() {
 		return
 	}
 
 	// Send to Kafka
-	//e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-	//	Value: []byte("Remove pending tx!"),
-	//})
+	e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+		Value: pendingTxBytes(processDeletionPendingTxs(pTxs)),
+	})
+}
+
+// --------------------
+// Helpers
+// --------------------
+
+func calculateBlockReward(in *BlockIn) (int64, int64, int64) {
+	var (
+		txFees      int64
+		blockReward int64
+		uncleReward int64
+	)
+
+	if in.TxFees != nil {
+		txFees = in.TxFees.Int64()
+	} else {
+		txFees = big0.Int64()
+	}
+
+	if in.IsUncle {
+		blockReward = in.UncleReward.Int64()
+		uncleReward = big0.Int64()
+	} else {
+		blockR, uncleR := in.BlockRewardFunc(in.Block)
+		blockReward, uncleReward = blockR.Int64(), uncleR.Int64()
+	}
+
+	return txFees, blockReward, uncleReward
+}
+
+func processBlockTopics(rawTopics []common.Hash) []string {
+	topics := make([]string, len(rawTopics))
+	for i, rawTopic := range rawTopics {
+		topics[i] = rawTopic.Hex()
+	}
+	return topics
+}
+
+func processBlockLogs(receipt *types.Receipt) []*Log {
+	rawLogs := receipt.Logs
+	if rawLogs == nil || len(rawLogs) == 0 {
+		return make([]*Log, 0)
+	}
+
+	var logs []*Log
+	for _, rawLog := range rawLogs {
+		if rawLog == nil {
+			continue
+		}
+
+		log := &Log{
+			Address: rawLog.Address.Hex(),
+			Topics:  processBlockTopics(rawLog.Topics),
+			Data:    rawLog.Data,
+			Index:   int32(rawLog.Index),
+			Removed: rawLog.Removed,
+		}
+
+		logs = append(logs, log)
+	}
+
+	return logs
+}
+
+func processBlockTrace(rawTrace interface{}) *Trace {
+	// TODO: Finish implementation
+	getTxTransfer := func() []map[string]interface{} {
+		var dTraces []map[string]interface{}
+		dTraces = append(dTraces, map[string]interface{}{
+			"op": "TX",
+			//"from":  from.Bytes(),
+			//"to":    to,
+			//"value": value,
+			//"input": input,
+		})
+		return dTraces
+	}
+
+	raw, ok := rawTrace.(map[string]interface{})
+	if !ok {
+		raw = map[string]interface{}{
+			"isError": true,
+			"msg":     rawTrace,
+		}
+	}
+
+	isError := raw["isError"].(bool)
+	transfers, ok := raw["transfers"].([]map[string]interface{})
+	if !isError && !ok {
+		raw["transfers"] = getTxTransfer()
+	} else {
+		raw["transfers"] = append(transfers, getTxTransfer()[0])
+	}
+
+	return &Trace{
+		IsError: func() bool {
+			return raw["isError"].(bool)
+		}(),
+		Msg: func() string {
+			return raw["msg"].(string)
+		}(),
+		Transfers: func() []*Transfer {
+			return make([]*Transfer, 0)
+		}(),
+	}
+}
+
+func processBlockTxs(state *state.StateDB, in *BlockIn) []*Transaction {
+	if in == nil {
+		return make([]*Transaction, 0)
+	}
+
+	var txs []*Transaction
+	blockTxs := in.BlockTxs
+	for i, blockTx := range *blockTxs {
+		header := in.Block.Header()
+		rawTx := blockTx.Tx
+		receipt := blockTx.Receipt
+		if receipt == nil {
+			continue
+		}
+		signer := in.Signer
+		from, _ := types.Sender(signer, rawTx)
+		_v, _r, _s := rawTx.RawSignatureValues()
+		fromBalance := state.GetBalance(from)
+		to := func() UnionNullString {
+			if rawTx.To() == nil {
+				return UnionNullString{
+					UnionType: UnionNullStringTypeEnumNull,
+				}
+			}
+			to := rawTx.To().Hex()
+			return UnionNullString{
+				String:    to,
+				UnionType: UnionNullStringTypeEnumString,
+			}
+		}()
+		toBalance := func() UnionNullLong {
+			if rawTx.To() == nil {
+				return UnionNullLong{
+					UnionType: UnionNullLongTypeEnumNull,
+				}
+			}
+			toBalance := state.GetBalance(*rawTx.To()).Int64()
+			return UnionNullLong{
+				Long:      toBalance,
+				UnionType: UnionNullLongTypeEnumLong,
+			}
+		}
+		value := rawTx.Value()
+		input := rawTx.Data()
+		contractAddress := func() UnionNullString {
+			if receipt.ContractAddress == (common.Address{}) {
+				return UnionNullString{
+					UnionType: UnionNullStringTypeEnumNull,
+				}
+			}
+			return UnionNullString{
+				String:    receipt.ContractAddress.Hex(),
+				UnionType: UnionNullStringTypeEnumString,
+			}
+		}()
+
+		tx := &Transaction{
+			Hash:              rawTx.Hash().Hex(),
+			Root:              header.ReceiptHash.Hex(),
+			Index:             int32(i),
+			Timestamp:         blockTx.Timestamp.Int64(),
+			Nonce:             int64(rawTx.Nonce()),
+			NonceHash:         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(rawTx.Nonce())).Bytes()).Hex(),
+			From:              from.Hex(),
+			FromBalance:       fromBalance.Int64(),
+			To:                to,
+			ToBalance:         toBalance(),
+			Input:             input,
+			Gas:               int64(rawTx.Gas()),
+			GasPrice:          rawTx.GasPrice().Int64(),
+			GasUsed:           int64(receipt.GasUsed),
+			CumulativeGasUsed: int64(receipt.CumulativeGasUsed),
+			ContractAddress:   contractAddress,
+			LogsBloom:         receipt.Bloom.Bytes(),
+			Value:             value.Int64(),
+			R:                 hexutil.Encode(_r.Bytes()),
+			V:                 hexutil.Encode(_v.Bytes()),
+			S:                 hexutil.Encode(_s.Bytes()),
+			Status:            int64(receipt.Status),
+			Logs:              processBlockLogs(receipt),
+			Trace:             processBlockTrace(blockTx.Trace),
+		}
+
+		txs = append(txs, tx)
+	}
+
+	return txs
+}
+
+func processInsertionPendingTxs(state *state.StateDB, rawPTxs []*PendingTxIn) PendingTxs {
+	var pTxs []*PendingTx
+
+	for _, raw := range rawPTxs {
+		tx := raw.Tx
+		from, _ := types.Sender(raw.Signer, raw.Tx)
+		fromBalance := state.GetBalance(from)
+		to := func() UnionNullString {
+			if tx.To() == nil {
+				return UnionNullString{
+					UnionType: UnionNullStringTypeEnumNull,
+				}
+			}
+			to := tx.To().Hex()
+			return UnionNullString{
+				String:    to,
+				UnionType: UnionNullStringTypeEnumString,
+			}
+		}()
+		toBalance := func() UnionNullLong {
+			if tx.To() == nil {
+				return UnionNullLong{
+					UnionType: UnionNullLongTypeEnumNull,
+				}
+			}
+			toBalance := state.GetBalance(*tx.To()).Int64()
+			return UnionNullLong{
+				Long:      toBalance,
+				UnionType: UnionNullLongTypeEnumLong,
+			}
+		}
+		contractAddress := func() UnionNullString {
+			if raw.Receipt.ContractAddress == (common.Address{}) {
+				return UnionNullString{
+					UnionType: UnionNullStringTypeEnumNull,
+				}
+			}
+			return UnionNullString{
+				String:    raw.Receipt.ContractAddress.Hex(),
+				UnionType: UnionNullStringTypeEnumString,
+			}
+		}()
+		input := tx.Data()
+		value := tx.Value()
+		_v, _r, _s := tx.RawSignatureValues()
+
+		pTx := &PendingTx{
+			Hash:              tx.Hash().Hex(),
+			Nonce:             int64(tx.Nonce()),
+			NonceHash:         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(tx.Nonce())).Bytes()).Hex(),
+			From:              from.Hex(),
+			FromBalance:       fromBalance.Int64(),
+			To:                to,
+			ToBalance:         toBalance(),
+			Input:             input,
+			Gas:               int64(tx.Gas()),
+			GasPrice:          tx.GasPrice().Int64(),
+			GasUsed:           int64(raw.Receipt.GasUsed),
+			CumulativeGasUsed: int64(raw.Receipt.CumulativeGasUsed),
+			ContractAddress:   contractAddress,
+			LogsBloom:         raw.Receipt.Bloom.Bytes(),
+			Value:             value.Int64(),
+			R:                 hexutil.Encode(_r.Bytes()),
+			V:                 hexutil.Encode(_v.Bytes()),
+			S:                 hexutil.Encode(_s.Bytes()),
+			Status:            int64(raw.Receipt.Status),
+			Logs:              processBlockLogs(raw.Receipt),
+			Trace:             processBlockTrace(raw.Trace),
+			TxStatus:          raw.Action,
+		}
+		pTxs = append(pTxs, pTx)
+	}
+
+	return PendingTxs{
+		Transactions: pTxs,
+	}
+}
+
+func processDeletionPendingTxs(rawPTxs []*PendingTxIn) PendingTxs {
+	var pTxs []*PendingTx
+
+	for _, raw := range rawPTxs {
+		pTx := &PendingTx{
+			Hash:     raw.Tx.Hash().Hex(),
+			TxStatus: raw.Action,
+		}
+		pTxs = append(pTxs, pTx)
+	}
+
+	return PendingTxs{
+		Transactions: pTxs,
+	}
 }
