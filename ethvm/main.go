@@ -19,7 +19,9 @@ package ethvm
 import (
 	"math/big"
 
+	"bytes"
 	"context"
+	"encoding/binary"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -27,8 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/segmentio/kafka-go"
 	"gopkg.in/urfave/cli.v1"
-	"math"
-	"bytes"
 )
 
 var (
@@ -327,10 +327,31 @@ func (in *BlockIn) bytes(state *state.StateDB) []byte {
 		UncleReward: uncleReward,
 	}
 
+	// Encode
+	buffer := &bytes.Buffer{}
+
+	// Magic bytes, first
+	_, err := buffer.Write([]byte{0})
+	if err != nil {
+		panic(err)
+	}
+
+	// Id, in our case 1
+	idSlice := make([]byte, 4)
+	binary.BigEndian.PutUint32(idSlice, uint32(1))
+	_, err = buffer.Write(idSlice)
+	if err != nil {
+		panic(err)
+	}
+
+	// Encode data
 	var buf bytes.Buffer
 	b.Serialize(&buf)
 
-	return buf.Bytes()
+	// Append to main buffer
+	buffer.Write(buf.Bytes())
+
+	return buffer.Bytes()
 }
 
 // NewBlockIn Creates and formats a new BlockIn struct
@@ -470,15 +491,13 @@ func (e *EthVM) Connect() {
 
 	// Create Kafka writers
 	e.blocksW = kafka.NewWriter(kafka.WriterConfig{
-		Brokers:       []string{e.brokers},
-		Topic:         e.blocksTopic,
-		QueueCapacity: math.MaxInt32,
+		Brokers: []string{e.brokers},
+		Topic:   e.blocksTopic,
 	})
 
 	e.pTxsW = kafka.NewWriter(kafka.WriterConfig{
-		Brokers:       []string{e.brokers},
-		Topic:         e.pTxsTopic,
-		QueueCapacity: math.MaxInt32,
+		Brokers: []string{e.brokers},
+		Topic:   e.pTxsTopic,
 	})
 }
 
