@@ -29,11 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/segmentio/kafka-go"
 	"gopkg.in/urfave/cli.v1"
-<<<<<<< HEAD
-	"bytes"
-	"encoding/binary"
-=======
->>>>>>> bc41a7e1822792c8620f06630c123388d979a48e
 )
 
 var (
@@ -147,27 +142,16 @@ func (in *BlockIn) bytes(state *state.StateDB) []byte {
 		UncleReward: uncleReward,
 	}
 
-<<<<<<< HEAD
 	// Encode as Kafka requirements
 	buffer := &bytes.Buffer{}
 
 	// 1) Magic bytes
-=======
-	// Encode
-	buffer := &bytes.Buffer{}
-
-	// Magic bytes, first
->>>>>>> bc41a7e1822792c8620f06630c123388d979a48e
 	_, err := buffer.Write([]byte{0})
 	if err != nil {
 		panic(err)
 	}
 
-<<<<<<< HEAD
 	// 2) Id, in our case 1
-=======
-	// Id, in our case 1
->>>>>>> bc41a7e1822792c8620f06630c123388d979a48e
 	idSlice := make([]byte, 4)
 	binary.BigEndian.PutUint32(idSlice, uint32(1))
 	_, err = buffer.Write(idSlice)
@@ -175,11 +159,7 @@ func (in *BlockIn) bytes(state *state.StateDB) []byte {
 		panic(err)
 	}
 
-<<<<<<< HEAD
 	// 3) Encode data
-=======
-	// Encode data
->>>>>>> bc41a7e1822792c8620f06630c123388d979a48e
 	var buf bytes.Buffer
 	b.Serialize(&buf)
 
