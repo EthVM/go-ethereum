@@ -67,15 +67,7 @@ func NewSchemaRegistryClient(connect []string) *KafkaSchemaRegistryClient {
 	client := &http.Client{
 		Timeout: timeout,
 	}
-	return &KafkaSchemaRegistryClient{connect, client, len(connect)}
-}
-
-// NewSchemaRegistryClientWithRetries creates an http client with a configurable amount of retries on 5XX responses
-func NewSchemaRegistryClientWithRetries(connect []string, retries int) *KafkaSchemaRegistryClient {
-	client := &http.Client{
-		Timeout: timeout,
-	}
-	return &KafkaSchemaRegistryClient{connect, client, retries}
+	return &KafkaSchemaRegistryClient{connect, client, 3}
 }
 
 // GetSchema returns a goavro.Codec by unique id

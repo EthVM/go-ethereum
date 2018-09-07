@@ -1177,7 +1177,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks) (int, []interface{}, []*ty
 
 		// Write the block to EthVM
 		blockIn := ethvm.NewBlockIn(block, &txBlocks, td, signer, txFees, blockReward, byte(status))
-		ethvm.GetInstance().InsertBlock(state, blockIn)
+		ethvm.GetInstance().ProcessBlock(state, blockIn)
 
 		switch status {
 		case CanonStatTy:

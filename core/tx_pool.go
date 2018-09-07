@@ -321,7 +321,7 @@ func (pool *TxPool) loop() {
 				if time.Since(pool.beats[addr]) > pool.config.Lifetime {
 					for _, tx := range pool.queue[addr].Flatten() {
 						pool.removeTx(tx.Hash(), true)
-						ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionEXPIRED))
+						ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionEXPIRED))
 					}
 				}
 			}
@@ -471,7 +471,7 @@ func (pool *TxPool) SetGasPrice(price *big.Int) {
 	pool.gasPrice = price
 	for _, tx := range pool.priced.Cap(price, pool.locals) {
 		pool.removeTx(tx.Hash(), false)
-		ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionUNPAYABLE))
+		ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionUNPAYABLE))
 	}
 	log.Info("Transaction pool price threshold updated", "price", price)
 }
@@ -634,7 +634,7 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 			log.Trace("Discarding freshly underpriced transaction", "hash", tx.Hash(), "price", tx.GasPrice())
 			underpricedTxCounter.Inc(1)
 			pool.removeTx(tx.Hash(), false)
-			ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionUNDERPRICED))
+			ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionUNDERPRICED))
 		}
 	}
 	// If the transaction is replacing an already pending one, do directly
@@ -664,7 +664,7 @@ func (pool *TxPool) add(tx *types.Transaction, local bool) (bool, error) {
 			ptx := ethvm.NewPendingTxIn(tx, tResult, pool.signer, receipt, models.ActionREPLACED)
 
 			// Store validated pending txs into EthVM
-			ethvm.GetInstance().InsertPendingTx(copyState, ptx)
+			ethvm.GetInstance().ProcessPendingTx(copyState, ptx)
 		}
 		pool.all.Add(tx)
 		pool.priced.Put(tx)
@@ -826,7 +826,7 @@ func (pool *TxPool) addTx(tx *types.Transaction, local bool) error {
 	ptx := ethvm.NewPendingTxIn(tx, tResult, pool.signer, receipt, models.ActionQUEUED)
 
 	// Store validated pending txs into Ethvm
-	ethvm.GetInstance().InsertPendingTx(copyState, ptx)
+	ethvm.GetInstance().ProcessPendingTx(copyState, ptx)
 
 	return nil
 }
@@ -876,7 +876,7 @@ func (pool *TxPool) addTxsLocked(txs []*types.Transaction, local bool) []error {
 	}
 
 	// Store validated pending txs into Ethvm
-	ethvm.GetInstance().InsertPendingTxs(copyState, ptxs)
+	ethvm.GetInstance().ProcessPendingTxs(copyState, ptxs)
 
 	return errs
 }
@@ -976,7 +976,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			log.Trace("Removed old queued transaction", "hash", hash)
 			pool.all.Remove(hash)
 			pool.priced.Removed()
-			ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionLOW_NONCE))
+			ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionLOW_NONCE))
 		}
 		// Drop all transactions that are too costly (low balance or out of gas)
 		drops, _ := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
@@ -986,7 +986,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			pool.all.Remove(hash)
 			pool.priced.Removed()
 			queuedNofundsCounter.Inc(1)
-			ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionINSUFFICIENT_FUNDS))
+			ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionINSUFFICIENT_FUNDS))
 		}
 		// Gather all executable transactions and promote them
 		for _, tx := range list.Ready(pool.pendingState.GetNonce(addr)) {
@@ -1003,7 +1003,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 				pool.all.Remove(hash)
 				pool.priced.Removed()
 				queuedRateLimitCounter.Inc(1)
-				ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionCAP_EXCEEDING))
+				ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionCAP_EXCEEDING))
 				log.Trace("Removed cap-exceeding queued transaction", "hash", hash)
 			}
 		}
@@ -1052,7 +1052,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 							hash := tx.Hash()
 							pool.all.Remove(hash)
 							pool.priced.Removed()
-							ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionCAP_EXCEEDING))
+							ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionCAP_EXCEEDING))
 
 							// Update the account nonce to the dropped transaction
 							if nonce := tx.Nonce(); pool.pendingState.GetNonce(offenders[i]) > nonce {
@@ -1075,7 +1075,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 						hash := tx.Hash()
 						pool.all.Remove(hash)
 						pool.priced.Removed()
-						ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionCAP_EXCEEDING))
+						ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionCAP_EXCEEDING))
 
 						// Update the account nonce to the dropped transaction
 						if nonce := tx.Nonce(); pool.pendingState.GetNonce(addr) > nonce {
@@ -1115,7 +1115,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			if size := uint64(list.Len()); size <= drop {
 				for _, tx := range list.Flatten() {
 					pool.removeTx(tx.Hash(), true)
-					ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionCAP_EXCEEDING))
+					ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionCAP_EXCEEDING))
 				}
 				drop -= size
 				queuedRateLimitCounter.Inc(int64(size))
@@ -1125,7 +1125,7 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			txs := list.Flatten()
 			for i := len(txs) - 1; i >= 0 && drop > 0; i-- {
 				pool.removeTx(txs[i].Hash(), true)
-				ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(txs[i], models.ActionEXPIRED))
+				ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(txs[i], models.ActionEXPIRED))
 				drop--
 				queuedRateLimitCounter.Inc(1)
 			}
@@ -1147,7 +1147,7 @@ func (pool *TxPool) demoteUnexecutables() {
 			log.Trace("Removed old pending transaction", "hash", hash)
 			pool.all.Remove(hash)
 			pool.priced.Removed()
-			ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionEXPIRED))
+			ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionEXPIRED))
 		}
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
 		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
@@ -1157,7 +1157,7 @@ func (pool *TxPool) demoteUnexecutables() {
 			pool.all.Remove(hash)
 			pool.priced.Removed()
 			pendingNofundsCounter.Inc(1)
-			ethvm.GetInstance().RemovePendingTx(ethvm.UpdatePendingTxIn(tx, models.ActionUNPAYABLE))
+			ethvm.GetInstance().ProcessPendingTx(nil, ethvm.UpdatePendingTxIn(tx, models.ActionUNPAYABLE))
 		}
 		for _, tx := range invalids {
 			hash := tx.Hash()

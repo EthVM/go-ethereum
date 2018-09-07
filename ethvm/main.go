@@ -31,7 +31,7 @@ import (
 	"gopkg.in/urfave/cli.v1"
 	"github.com/ethereum/go-ethereum/ethvm/models"
 	"github.com/ethereum/go-ethereum/ethvm/registry"
-	)
+)
 
 var (
 	// EthVMFlag Enables ETHVM to listen on Ethereum data
@@ -79,14 +79,6 @@ var (
 	instance *EthVM
 )
 
-// ----------
-// Generators
-// ----------
-
-// Make sure you have installed gogen-avro: https://github.com/actgardner/gogen-avro
-
-//go:generate $GOPATH/bin/gogen-avro --package=ethvm . schemas.v1.avsc
-
 // ------------------
 // EthVM data structs
 // ------------------
@@ -105,7 +97,7 @@ type BlockIn struct {
 	Status          byte
 }
 
-func (in *BlockIn) bytes(state *state.StateDB) []byte {
+func (in *BlockIn) bytes(schemaId int, state *state.StateDB) []byte {
 	block := in.Block
 	header := block.Header()
 	td := func() int64 {
@@ -151,31 +143,10 @@ func (in *BlockIn) bytes(state *state.StateDB) []byte {
 		UncleReward:      uncleReward,
 	}
 
-	// Encode as Kafka requirements
-	buffer := &bytes.Buffer{}
-
-	// 1) Magic bytes
-	_, err := buffer.Write([]byte{0})
-	if err != nil {
-		panic(err)
-	}
-
-	// 2) Id, in our case 1
-	idSlice := make([]byte, 4)
-	binary.BigEndian.PutUint32(idSlice, uint32(1))
-	_, err = buffer.Write(idSlice)
-	if err != nil {
-		panic(err)
-	}
-
-	// 3) Encode data
 	var buf bytes.Buffer
 	b.Serialize(&buf)
 
-	// Append to main buffer
-	buffer.Write(buf.Bytes())
-
-	return buffer.Bytes()
+	return toAvroBytes(schemaId, buf.Bytes())
 }
 
 // NewBlockIn Creates and formats a new BlockIn struct
@@ -226,56 +197,12 @@ type PendingTxIn struct {
 	Action  models.Action
 }
 
-func pendingTxBytes(ptx models.PendingTxs) []byte {
-	// Encode as Kafka requirements
-	buffer := &bytes.Buffer{}
-
-	// 1) Magic bytes
-	_, err := buffer.Write([]byte{0})
-	if err != nil {
-		panic(err)
-	}
-
-	// 2) Id, in our case 2
-	idSlice := make([]byte, 4)
-	binary.BigEndian.PutUint32(idSlice, uint32(2))
-	_, err = buffer.Write(idSlice)
-	if err != nil {
-		panic(err)
-	}
-
-	// 3) Encode data
+func pendingTxBytes(schemaId int, ptx models.PendingTx) []byte {
+	// Encode data
 	var buf bytes.Buffer
 	ptx.Serialize(&buf)
 
-	// Append to main buffer
-	buffer.Write(buf.Bytes())
-
-	return buf.Bytes()
-}
-
-func addAvroHeaders(id int, data []byte) []byte {
-	// Encode as Kafka requirements
-	buffer := &bytes.Buffer{}
-
-	// 1) Magic bytes
-	_, err := buffer.Write([]byte{0})
-	if err != nil {
-		panic(err)
-	}
-
-	// 2) Id
-	idSlice := make([]byte, 4)
-	binary.BigEndian.PutUint32(idSlice, uint32(id))
-	_, err = buffer.Write(idSlice)
-	if err != nil {
-		panic(err)
-	}
-
-	// 3) Add data
-	buffer.Write(data)
-
-	return buffer.Bytes()
+	return toAvroBytes(2, buf.Bytes())
 }
 
 func NewPendingTxIn(tx *types.Transaction, trace interface{}, signer types.Signer, receipt *types.Receipt, action models.Action) *PendingTxIn {
@@ -387,6 +314,21 @@ func (e *EthVM) Connect() {
 		return
 	}
 
+	var err error
+
+	// Retrieve schemas ids
+	blocksIds, err := e.schemaRegistryClient.GetVersions(e.blocksTopic + "-value")
+	if err != nil {
+		panic(err)
+	}
+	e.blocksSchemaId = blocksIds[0]
+
+	pTxsIds, err := e.schemaRegistryClient.GetVersions(e.pTxsTopic + "-value")
+	if err != nil {
+		panic(err)
+	}
+	e.pTxsSchemaId = pTxsIds[0]
+
 	// Create Kafka writers
 	e.blocksW = kafka.NewWriter(kafka.WriterConfig{
 		Brokers: []string{e.brokers},
@@ -399,8 +341,8 @@ func (e *EthVM) Connect() {
 	})
 }
 
-// InsertBlock Adds a new Block to EthVM
-func (e *EthVM) InsertBlock(state *state.StateDB, blockIn *BlockIn) {
+// ProcessBlock Adds a new Block to EthVM
+func (e *EthVM) ProcessBlock(state *state.StateDB, blockIn *BlockIn) {
 	if !e.isEnabled() {
 		return
 	}
@@ -408,58 +350,44 @@ func (e *EthVM) InsertBlock(state *state.StateDB, blockIn *BlockIn) {
 	// Send to Kafka
 	err := e.blocksW.WriteMessages(context.Background(), kafka.Message{
 		Key:   []byte(hexutil.Encode(blockIn.Block.Header().Hash().Bytes())),
-		Value: blockIn.bytes(state),
+		Value: blockIn.bytes(e.blocksSchemaId, state),
 	})
 	if err != nil {
 		panic(err)
 	}
 }
 
-// InsertPendingTx Validates and store pending tx into DB
-func (e *EthVM) InsertPendingTx(stateDb *state.StateDB, tx *PendingTxIn) {
+// ProcessPendingTx Validates and store pending tx into DB
+func (e *EthVM) ProcessPendingTx(state *state.StateDB, pTx *PendingTxIn) {
 	if !e.isEnabled() {
 		return
 	}
 
-	pTxs := []*PendingTxIn{tx}
-	e.InsertPendingTxs(stateDb, pTxs)
+	err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+		Key:   []byte(pTx.Tx.Hash().Hex()),
+		Value: pendingTxBytes(e.pTxsSchemaId, processPendingTx(state, pTx)),
+	})
+	if err != nil {
+		panic(err)
+	}
 }
 
-// InsertPendingTxs Validates and store pending txs into DB
-func (e *EthVM) InsertPendingTxs(state *state.StateDB, pTxs []*PendingTxIn) {
+// ProcessPendingTxs Validates and store pending txs into DB
+func (e *EthVM) ProcessPendingTxs(state *state.StateDB, pTxs []*PendingTxIn) {
 	if !e.isEnabled() {
 		return
 	}
 
 	// Send to kafka
-	err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-		Value: pendingTxBytes(processInsertionPendingTxs(state, pTxs)),
-	})
-	if err != nil {
-		panic(err)
+	for _, pTx := range pTxs {
+		err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+			Key:   []byte(pTx.Tx.Hash().Hex()),
+			Value: pendingTxBytes(e.pTxsSchemaId, processPendingTx(state, pTx)),
+		})
+		if err != nil {
+			panic(err)
+		}
 	}
-}
-
-// RemovePendingTxs Removes a pending transaction from the DB
-func (e *EthVM) RemovePendingTx(pTx *PendingTxIn) {
-	if !e.isEnabled() {
-		return
-	}
-
-	pTxs := []*PendingTxIn{pTx}
-	e.RemovePendingTxs(pTxs)
-}
-
-// RemovePendingTxs Removes a pending transaction from the DB
-func (e *EthVM) RemovePendingTxs(pTxs []*PendingTxIn) {
-	if !e.isEnabled() {
-		return
-	}
-
-	// Send to Kafka
-	e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-		Value: pendingTxBytes(processDeletionPendingTxs(pTxs)),
-	})
 }
 
 // --------------------
@@ -656,96 +584,109 @@ func processBlockTxs(state *state.StateDB, in *BlockIn) []*models.Transaction {
 	return txs
 }
 
-func processInsertionPendingTxs(state *state.StateDB, rawPTxs []*PendingTxIn) models.PendingTxs {
-	var pTxs []*models.PendingTx
+func processPendingTx(state *state.StateDB, raw *PendingTxIn) models.PendingTx {
+	if state == nil {
+		return processSimplePendingTxs(raw)
+	}
 
-	for _, raw := range rawPTxs {
-		tx := raw.Tx
-		from, _ := types.Sender(raw.Signer, raw.Tx)
-		fromBalance := state.GetBalance(from)
-		to := func() models.UnionNullString {
-			if tx.To() == nil {
-				return models.UnionNullString{
-					UnionType: models.UnionNullStringTypeEnumNull,
-				}
-			}
-			to := tx.To().Hex()
+	tx := raw.Tx
+	from, _ := types.Sender(raw.Signer, raw.Tx)
+	fromBalance := state.GetBalance(from)
+	to := func() models.UnionNullString {
+		if tx.To() == nil {
 			return models.UnionNullString{
-				String:    to,
-				UnionType: models.UnionNullStringTypeEnumString,
+				UnionType: models.UnionNullStringTypeEnumNull,
 			}
-		}()
-		toBalance := func() models.UnionNullLong {
-			if tx.To() == nil {
-				return models.UnionNullLong{
-					UnionType: models.UnionNullLongTypeEnumNull,
-				}
-			}
-			toBalance := state.GetBalance(*tx.To()).Int64()
+		}
+		to := tx.To().Hex()
+		return models.UnionNullString{
+			String:    to,
+			UnionType: models.UnionNullStringTypeEnumString,
+		}
+	}()
+	toBalance := func() models.UnionNullLong {
+		if tx.To() == nil {
 			return models.UnionNullLong{
-				Long:      toBalance,
-				UnionType: models.UnionNullLongTypeEnumLong,
+				UnionType: models.UnionNullLongTypeEnumNull,
 			}
 		}
-		contractAddress := func() models.UnionNullString {
-			if raw.Receipt.ContractAddress == (common.Address{}) {
-				return models.UnionNullString{
-					UnionType: models.UnionNullStringTypeEnumNull,
-				}
-			}
+		toBalance := state.GetBalance(*tx.To()).Int64()
+		return models.UnionNullLong{
+			Long:      toBalance,
+			UnionType: models.UnionNullLongTypeEnumLong,
+		}
+	}
+	contractAddress := func() models.UnionNullString {
+		if raw.Receipt.ContractAddress == (common.Address{}) {
 			return models.UnionNullString{
-				String:    raw.Receipt.ContractAddress.Hex(),
-				UnionType: models.UnionNullStringTypeEnumString,
+				UnionType: models.UnionNullStringTypeEnumNull,
 			}
-		}()
-		input := tx.Data()
-		value := tx.Value()
-		_v, _r, _s := tx.RawSignatureValues()
-
-		pTx := &models.PendingTx{
-			Hash:              tx.Hash().Hex(),
-			Nonce:             int64(tx.Nonce()),
-			NonceHash:         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(tx.Nonce())).Bytes()).Hex(),
-			From:              from.Hex(),
-			FromBalance:       fromBalance.Int64(),
-			To:                to,
-			ToBalance:         toBalance(),
-			Input:             input,
-			Gas:               int64(tx.Gas()),
-			GasPrice:          tx.GasPrice().Int64(),
-			GasUsed:           int64(raw.Receipt.GasUsed),
-			CumulativeGasUsed: int64(raw.Receipt.CumulativeGasUsed),
-			ContractAddress:   contractAddress,
-			LogsBloom:         raw.Receipt.Bloom.Bytes(),
-			Value:             value.Int64(),
-			R:                 hexutil.Encode(_r.Bytes()),
-			V:                 hexutil.Encode(_v.Bytes()),
-			S:                 hexutil.Encode(_s.Bytes()),
-			Status:            int64(raw.Receipt.Status),
-			Logs:              processBlockLogs(raw.Receipt),
-			Trace:             processBlockTrace(raw.Trace),
-			TxStatus:          raw.Action,
 		}
-		pTxs = append(pTxs, pTx)
+		return models.UnionNullString{
+			String:    raw.Receipt.ContractAddress.Hex(),
+			UnionType: models.UnionNullStringTypeEnumString,
+		}
+	}()
+	input := tx.Data()
+	value := tx.Value()
+	_v, _r, _s := tx.RawSignatureValues()
+
+	pTx := models.PendingTx{
+		Hash:              tx.Hash().Hex(),
+		Nonce:             int64(tx.Nonce()),
+		NonceHash:         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(tx.Nonce())).Bytes()).Hex(),
+		From:              from.Hex(),
+		FromBalance:       fromBalance.Int64(),
+		To:                to,
+		ToBalance:         toBalance(),
+		Input:             input,
+		Gas:               int64(tx.Gas()),
+		GasPrice:          tx.GasPrice().Int64(),
+		GasUsed:           int64(raw.Receipt.GasUsed),
+		CumulativeGasUsed: int64(raw.Receipt.CumulativeGasUsed),
+		ContractAddress:   contractAddress,
+		LogsBloom:         raw.Receipt.Bloom.Bytes(),
+		Value:             value.Int64(),
+		R:                 hexutil.Encode(_r.Bytes()),
+		V:                 hexutil.Encode(_v.Bytes()),
+		S:                 hexutil.Encode(_s.Bytes()),
+		Status:            int64(raw.Receipt.Status),
+		Logs:              processBlockLogs(raw.Receipt),
+		Trace:             processBlockTrace(raw.Trace),
+		TxStatus:          raw.Action,
 	}
 
-	return models.PendingTxs{
-		Transactions: pTxs,
-	}
+	return pTx
 }
 
-func processDeletionPendingTxs(rawPTxs []*PendingTxIn) models.PendingTxs {
-	var pTxs []*models.PendingTx
+func processSimplePendingTxs(raw *PendingTxIn) models.PendingTx {
+	pTx := models.PendingTx{
+		Hash:     raw.Tx.Hash().Hex(),
+		TxStatus: raw.Action,
+	}
+	return pTx
+}
 
-	for _, raw := range rawPTxs {
-		pTx := &models.PendingTx{
-			Hash:     raw.Tx.Hash().Hex(),
-			TxStatus: raw.Action,
-		}
-		pTxs = append(pTxs, pTx)
+func toAvroBytes(id int, data []byte) []byte {
+	// Encode data per kafka / avro spec
+	buffer := &bytes.Buffer{}
+
+	// 1) Magic bytes
+	_, err := buffer.Write([]byte{0})
+	if err != nil {
+		panic(err)
 	}
 
-	return models.PendingTxs{
-		Transactions: pTxs,
+	// 2) Id
+	idSlice := make([]byte, 4)
+	binary.BigEndian.PutUint32(idSlice, uint32(id))
+	_, err = buffer.Write(idSlice)
+	if err != nil {
+		panic(err)
 	}
+
+	// 3) Add data
+	buffer.Write(data)
+
+	return buffer.Bytes()
 }
