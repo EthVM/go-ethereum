@@ -160,6 +160,7 @@ var (
 		ethvm.EthVMBrokersFlag,
 		ethvm.EthVMBlocksTopicFlag,
 		ethvm.EthVMPendingTxsTopicFlag,
+		ethvm.EthVMSchemaRegistryFlag,
 	}
 )
 

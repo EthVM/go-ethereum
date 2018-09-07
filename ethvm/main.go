@@ -29,7 +29,9 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/segmentio/kafka-go"
 	"gopkg.in/urfave/cli.v1"
-)
+	"github.com/ethereum/go-ethereum/ethvm/models"
+	"github.com/ethereum/go-ethereum/ethvm/registry"
+	)
 
 var (
 	// EthVMFlag Enables ETHVM to listen on Ethereum data
@@ -54,6 +56,12 @@ var (
 	EthVMPendingTxsTopicFlag = cli.StringFlag{
 		Name:  "ethvm-pending-txs-topic",
 		Usage: "Name of the kafka pending txs topic",
+	}
+
+	// EthVMSchemaRegistryFlag URL of the kafka schema registry
+	EthVMSchemaRegistryFlag = cli.StringFlag{
+		Name:  "ethvm-kafka-schema-registry-url",
+		Usage: "URL of the schema registry",
 	}
 
 	// TraceStr Javascript definition for the tracer that analyzes transactions
@@ -108,8 +116,15 @@ func (in *BlockIn) bytes(state *state.StateDB) []byte {
 	}()
 	txFees, blockReward, uncleReward := calculateBlockReward(in)
 	txs := processBlockTxs(state, in)
+	uncles := func() []string {
+		uncles := make([]string, len(block.Uncles()))
+		for i, uncle := range block.Uncles() {
+			uncles[i] = uncle.Hash().Hex()
+		}
+		return uncles
+	}()
 
-	b := &Block{
+	b := &models.Block{
 		Number:           header.Number.Int64(),
 		Hash:             header.Hash().Hex(),
 		ParentHash:       header.Hash().Hex(),
@@ -131,15 +146,9 @@ func (in *BlockIn) bytes(state *state.StateDB) []byte {
 		GasUsed:          int64(header.GasUsed),
 		Transactions:     txs,
 		TxsFees:          txFees,
-		Uncles: func() []string {
-			uncles := make([]string, len(block.Uncles()))
-			for i, uncle := range block.Uncles() {
-				uncles[i] = uncle.Hash().Hex()
-			}
-			return uncles
-		}(),
-		BlockReward: blockReward,
-		UncleReward: uncleReward,
+		Uncles:           uncles,
+		BlockReward:      blockReward,
+		UncleReward:      uncleReward,
 	}
 
 	// Encode as Kafka requirements
@@ -214,10 +223,10 @@ type PendingTxIn struct {
 	Trace   interface{}
 	Signer  types.Signer
 	Receipt *types.Receipt
-	Action  Action
+	Action  models.Action
 }
 
-func pendingTxBytes(ptx PendingTxs) []byte {
+func pendingTxBytes(ptx models.PendingTxs) []byte {
 	// Encode as Kafka requirements
 	buffer := &bytes.Buffer{}
 
@@ -227,9 +236,9 @@ func pendingTxBytes(ptx PendingTxs) []byte {
 		panic(err)
 	}
 
-	// 2) Id, in our case 1
+	// 2) Id, in our case 2
 	idSlice := make([]byte, 4)
-	binary.BigEndian.PutUint32(idSlice, uint32(1))
+	binary.BigEndian.PutUint32(idSlice, uint32(2))
 	_, err = buffer.Write(idSlice)
 	if err != nil {
 		panic(err)
@@ -245,7 +254,31 @@ func pendingTxBytes(ptx PendingTxs) []byte {
 	return buf.Bytes()
 }
 
-func NewPendingTxIn(tx *types.Transaction, trace interface{}, signer types.Signer, receipt *types.Receipt, action Action) *PendingTxIn {
+func addAvroHeaders(id int, data []byte) []byte {
+	// Encode as Kafka requirements
+	buffer := &bytes.Buffer{}
+
+	// 1) Magic bytes
+	_, err := buffer.Write([]byte{0})
+	if err != nil {
+		panic(err)
+	}
+
+	// 2) Id
+	idSlice := make([]byte, 4)
+	binary.BigEndian.PutUint32(idSlice, uint32(id))
+	_, err = buffer.Write(idSlice)
+	if err != nil {
+		panic(err)
+	}
+
+	// 3) Add data
+	buffer.Write(data)
+
+	return buffer.Bytes()
+}
+
+func NewPendingTxIn(tx *types.Transaction, trace interface{}, signer types.Signer, receipt *types.Receipt, action models.Action) *PendingTxIn {
 	return &PendingTxIn{
 		Tx:      tx,
 		Trace:   trace,
@@ -255,7 +288,7 @@ func NewPendingTxIn(tx *types.Transaction, trace interface{}, signer types.Signe
 	}
 }
 
-func UpdatePendingTxIn(tx *types.Transaction, action Action) *PendingTxIn {
+func UpdatePendingTxIn(tx *types.Transaction, action models.Action) *PendingTxIn {
 	return &PendingTxIn{
 		Tx:     tx,
 		Action: action,
@@ -279,10 +312,18 @@ type EthVM struct {
 	enabled bool
 
 	// Kafka
-	brokers     string
+	brokers              string
+	schemaRegistryClient registry.SchemaRegistryClient
+
+	// Kafka - Topics
 	blocksTopic string
 	pTxsTopic   string
 
+	// Kafka - Schemas ids
+	blocksSchemaId int
+	pTxsSchemaId   int
+
+	// Kafka - Producers
 	blocksW *kafka.Writer
 	pTxsW   *kafka.Writer
 }
@@ -306,6 +347,13 @@ func GetInstance() *EthVM {
 				b = ctx.GlobalString(EthVMBrokersFlag.Name)
 			}
 			return b
+		}(),
+		schemaRegistryClient: func() registry.SchemaRegistryClient {
+			url := "http://localhost:8081"
+			if ctx.GlobalString(EthVMSchemaRegistryFlag.Name) != "" {
+				url = ctx.GlobalString(EthVMSchemaRegistryFlag.Name)
+			}
+			return registry.NewSchemaRegistryClient([]string{url})
 		}(),
 		blocksTopic: func() string {
 			topic := "raw-blocks"
@@ -450,19 +498,19 @@ func processBlockTopics(rawTopics []common.Hash) []string {
 	return topics
 }
 
-func processBlockLogs(receipt *types.Receipt) []*Log {
+func processBlockLogs(receipt *types.Receipt) []*models.Log {
 	rawLogs := receipt.Logs
 	if rawLogs == nil || len(rawLogs) == 0 {
-		return make([]*Log, 0)
+		return make([]*models.Log, 0)
 	}
 
-	var logs []*Log
+	var logs []*models.Log
 	for _, rawLog := range rawLogs {
 		if rawLog == nil {
 			continue
 		}
 
-		log := &Log{
+		log := &models.Log{
 			Address: rawLog.Address.Hex(),
 			Topics:  processBlockTopics(rawLog.Topics),
 			Data:    rawLog.Data,
@@ -476,7 +524,7 @@ func processBlockLogs(receipt *types.Receipt) []*Log {
 	return logs
 }
 
-func processBlockTrace(rawTrace interface{}) *Trace {
+func processBlockTrace(rawTrace interface{}) *models.Trace {
 	// TODO: Finish implementation
 	getTxTransfer := func() []map[string]interface{} {
 		var dTraces []map[string]interface{}
@@ -506,25 +554,25 @@ func processBlockTrace(rawTrace interface{}) *Trace {
 		raw["transfers"] = append(transfers, getTxTransfer()[0])
 	}
 
-	return &Trace{
+	return &models.Trace{
 		IsError: func() bool {
 			return raw["isError"].(bool)
 		}(),
 		Msg: func() string {
 			return raw["msg"].(string)
 		}(),
-		Transfers: func() []*Transfer {
-			return make([]*Transfer, 0)
+		Transfers: func() []*models.Transfer {
+			return make([]*models.Transfer, 0)
 		}(),
 	}
 }
 
-func processBlockTxs(state *state.StateDB, in *BlockIn) []*Transaction {
+func processBlockTxs(state *state.StateDB, in *BlockIn) []*models.Transaction {
 	if in == nil {
-		return make([]*Transaction, 0)
+		return make([]*models.Transaction, 0)
 	}
 
-	var txs []*Transaction
+	var txs []*models.Transaction
 	blockTxs := in.BlockTxs
 	for i, blockTx := range *blockTxs {
 		header := in.Block.Header()
@@ -537,45 +585,45 @@ func processBlockTxs(state *state.StateDB, in *BlockIn) []*Transaction {
 		from, _ := types.Sender(signer, rawTx)
 		_v, _r, _s := rawTx.RawSignatureValues()
 		fromBalance := state.GetBalance(from)
-		to := func() UnionNullString {
+		to := func() models.UnionNullString {
 			if rawTx.To() == nil {
-				return UnionNullString{
-					UnionType: UnionNullStringTypeEnumNull,
+				return models.UnionNullString{
+					UnionType: models.UnionNullStringTypeEnumNull,
 				}
 			}
 			to := rawTx.To().Hex()
-			return UnionNullString{
+			return models.UnionNullString{
 				String:    to,
-				UnionType: UnionNullStringTypeEnumString,
+				UnionType: models.UnionNullStringTypeEnumString,
 			}
 		}()
-		toBalance := func() UnionNullLong {
+		toBalance := func() models.UnionNullLong {
 			if rawTx.To() == nil {
-				return UnionNullLong{
-					UnionType: UnionNullLongTypeEnumNull,
+				return models.UnionNullLong{
+					UnionType: models.UnionNullLongTypeEnumNull,
 				}
 			}
 			toBalance := state.GetBalance(*rawTx.To()).Int64()
-			return UnionNullLong{
+			return models.UnionNullLong{
 				Long:      toBalance,
-				UnionType: UnionNullLongTypeEnumLong,
+				UnionType: models.UnionNullLongTypeEnumLong,
 			}
 		}
 		value := rawTx.Value()
 		input := rawTx.Data()
-		contractAddress := func() UnionNullString {
+		contractAddress := func() models.UnionNullString {
 			if receipt.ContractAddress == (common.Address{}) {
-				return UnionNullString{
-					UnionType: UnionNullStringTypeEnumNull,
+				return models.UnionNullString{
+					UnionType: models.UnionNullStringTypeEnumNull,
 				}
 			}
-			return UnionNullString{
+			return models.UnionNullString{
 				String:    receipt.ContractAddress.Hex(),
-				UnionType: UnionNullStringTypeEnumString,
+				UnionType: models.UnionNullStringTypeEnumString,
 			}
 		}()
 
-		tx := &Transaction{
+		tx := &models.Transaction{
 			Hash:              rawTx.Hash().Hex(),
 			Root:              header.ReceiptHash.Hex(),
 			Index:             int32(i),
@@ -608,53 +656,53 @@ func processBlockTxs(state *state.StateDB, in *BlockIn) []*Transaction {
 	return txs
 }
 
-func processInsertionPendingTxs(state *state.StateDB, rawPTxs []*PendingTxIn) PendingTxs {
-	var pTxs []*PendingTx
+func processInsertionPendingTxs(state *state.StateDB, rawPTxs []*PendingTxIn) models.PendingTxs {
+	var pTxs []*models.PendingTx
 
 	for _, raw := range rawPTxs {
 		tx := raw.Tx
 		from, _ := types.Sender(raw.Signer, raw.Tx)
 		fromBalance := state.GetBalance(from)
-		to := func() UnionNullString {
+		to := func() models.UnionNullString {
 			if tx.To() == nil {
-				return UnionNullString{
-					UnionType: UnionNullStringTypeEnumNull,
+				return models.UnionNullString{
+					UnionType: models.UnionNullStringTypeEnumNull,
 				}
 			}
 			to := tx.To().Hex()
-			return UnionNullString{
+			return models.UnionNullString{
 				String:    to,
-				UnionType: UnionNullStringTypeEnumString,
+				UnionType: models.UnionNullStringTypeEnumString,
 			}
 		}()
-		toBalance := func() UnionNullLong {
+		toBalance := func() models.UnionNullLong {
 			if tx.To() == nil {
-				return UnionNullLong{
-					UnionType: UnionNullLongTypeEnumNull,
+				return models.UnionNullLong{
+					UnionType: models.UnionNullLongTypeEnumNull,
 				}
 			}
 			toBalance := state.GetBalance(*tx.To()).Int64()
-			return UnionNullLong{
+			return models.UnionNullLong{
 				Long:      toBalance,
-				UnionType: UnionNullLongTypeEnumLong,
+				UnionType: models.UnionNullLongTypeEnumLong,
 			}
 		}
-		contractAddress := func() UnionNullString {
+		contractAddress := func() models.UnionNullString {
 			if raw.Receipt.ContractAddress == (common.Address{}) {
-				return UnionNullString{
-					UnionType: UnionNullStringTypeEnumNull,
+				return models.UnionNullString{
+					UnionType: models.UnionNullStringTypeEnumNull,
 				}
 			}
-			return UnionNullString{
+			return models.UnionNullString{
 				String:    raw.Receipt.ContractAddress.Hex(),
-				UnionType: UnionNullStringTypeEnumString,
+				UnionType: models.UnionNullStringTypeEnumString,
 			}
 		}()
 		input := tx.Data()
 		value := tx.Value()
 		_v, _r, _s := tx.RawSignatureValues()
 
-		pTx := &PendingTx{
+		pTx := &models.PendingTx{
 			Hash:              tx.Hash().Hex(),
 			Nonce:             int64(tx.Nonce()),
 			NonceHash:         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(tx.Nonce())).Bytes()).Hex(),
@@ -681,23 +729,23 @@ func processInsertionPendingTxs(state *state.StateDB, rawPTxs []*PendingTxIn) Pe
 		pTxs = append(pTxs, pTx)
 	}
 
-	return PendingTxs{
+	return models.PendingTxs{
 		Transactions: pTxs,
 	}
 }
 
-func processDeletionPendingTxs(rawPTxs []*PendingTxIn) PendingTxs {
-	var pTxs []*PendingTx
+func processDeletionPendingTxs(rawPTxs []*PendingTxIn) models.PendingTxs {
+	var pTxs []*models.PendingTx
 
 	for _, raw := range rawPTxs {
-		pTx := &PendingTx{
+		pTx := &models.PendingTx{
 			Hash:     raw.Tx.Hash().Hex(),
 			TxStatus: raw.Action,
 		}
 		pTxs = append(pTxs, pTx)
 	}
 
-	return PendingTxs{
+	return models.PendingTxs{
 		Transactions: pTxs,
 	}
 }
