@@ -639,7 +639,7 @@ func processPendingTx(state *state.StateDB, raw *PendingTxIn) models.PendingTx {
 		}
 	}
 	contractAddress := func() models.UnionNullString {
-		if raw.Receipt.ContractAddress == (common.Address{}) {
+		if raw.Receipt == nil || raw.Receipt.ContractAddress == (common.Address{}) {
 			return models.UnionNullString{
 				UnionType: models.UnionNullStringTypeEnumNull,
 			}
