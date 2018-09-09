@@ -17,7 +17,12 @@
 package ethvm
 
 import (
+	"fmt"
+	"io"
+	"io/ioutil"
 	"math/big"
+	"os"
+	"runtime"
 
 	"bytes"
 	"context"
@@ -27,10 +32,10 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/segmentio/kafka-go"
-	"gopkg.in/urfave/cli.v1"
 	"github.com/ethereum/go-ethereum/ethvm/models"
 	"github.com/ethereum/go-ethereum/ethvm/registry"
+	"github.com/segmentio/kafka-go"
+	"gopkg.in/urfave/cli.v1"
 )
 
 var (
@@ -64,8 +69,11 @@ var (
 		Usage: "URL of the schema registry",
 	}
 
-	// TraceStr Javascript definition for the tracer that analyzes transactions
-	TraceStr = "{transfers:[],isError:!1,msg:'',result:function(){return{transfers:this.transfers,isError:this.isError,msg:this.msg}},step:function(e,t){if(e.err)return this.isError=!0,void(this.msg=e.err.Error());var r=e.op,s=e.stack,o=e.memory,a={},i=e.account;return'CREATE'==r.toString()?(a={op:'CREATE',value:s.peek(0).Bytes(),from:i,fromBalance:t.getBalance(i).Bytes(),to:big.CreateContractAddress(i,t.getNonce(i)),toBalance:t.getBalance(big.CreateContractAddress(i,t.getNonce(i))).Bytes(),input:o.slice(big.ToInt(s.peek(1)),big.ToInt(s.peek(1))+big.ToInt(s.peek(2)))},void this.transfers.push(a)):'CALL'==r.toString()?(a={op:'CALL',value:s.peek(2).Bytes(),from:i,fromBalance:t.getBalance(i).Bytes(),to:big.BigToAddress(s.peek(1)),toBalance:t.getBalance(big.BigToAddress(s.peek(1))).Bytes(),input:o.slice(big.ToInt(s.peek(3)),big.ToInt(s.peek(3))+big.ToInt(s.peek(4)))},void this.transfers.push(a)):'SELFDESTRUCT'==r.toString()?(a={op:'SELFDESTRUCT',value:t.getBalance(i).Bytes(),from:i,fromBalance:t.getBalance(i).Bytes(),to:big.BigToAddress(s.peek(0)),toBalance:t.getBalance(big.BigToAddress(s.peek(0))).Bytes()},void this.transfers.push(a)):void 0}}"
+	// EthVMTracerFileFlag File that contains a Javascript tracer that logs operations on the EVM
+	EthVMTracerFileFlag = cli.StringFlag{
+		Name:  "ethvm-tracer-file",
+		Usage: "File that contains a Javascript tracer that logs operations on the EVM",
+	}
 
 	// Block rewards
 	big0  = big.NewInt(0)
@@ -253,6 +261,9 @@ type EthVM struct {
 	// Kafka - Producers
 	blocksW *kafka.Writer
 	pTxsW   *kafka.Writer
+
+	// TracerCode
+	traceJsCode string
 }
 
 // Init Saves cli.Context to be used inside EthVM
@@ -295,6 +306,14 @@ func GetInstance() *EthVM {
 				topic = ctx.GlobalString(EthVMPendingTxsTopicFlag.Name)
 			}
 			return topic
+		}(),
+		traceJsCode: func() string {
+			if ctx.GlobalString(EthVMPendingTxsTopicFlag.Name) != "" {
+				path := ctx.GlobalString(EthVMPendingTxsTopicFlag.Name)
+				return readTracer(path)
+			}
+
+			return noopTracer()
 		}(),
 	}
 	return instance
@@ -390,6 +409,10 @@ func (e *EthVM) ProcessPendingTxs(state *state.StateDB, pTxs []*PendingTxIn) {
 	}
 }
 
+func (e *EthVM) TracerCode() string {
+	return e.traceJsCode
+}
+
 // --------------------
 // Helpers
 // --------------------
@@ -453,33 +476,19 @@ func processBlockLogs(receipt *types.Receipt) []*models.Log {
 }
 
 func processBlockTrace(rawTrace interface{}) *models.Trace {
-	// TODO: Finish implementation
-	getTxTransfer := func() []map[string]interface{} {
-		var dTraces []map[string]interface{}
-		dTraces = append(dTraces, map[string]interface{}{
-			"op": "TX",
-			//"from":  from.Bytes(),
-			//"to":    to,
-			//"value": value,
-			//"input": input,
-		})
-		return dTraces
-	}
-
 	raw, ok := rawTrace.(map[string]interface{})
 	if !ok {
 		raw = map[string]interface{}{
-			"isError": true,
-			"msg":     rawTrace,
+			"isError":  true,
+			"errorMsg": rawTrace,
 		}
 	}
 
 	isError := raw["isError"].(bool)
-	transfers, ok := raw["transfers"].([]map[string]interface{})
+	rawTransfers, ok := raw["rawTransfers"].([]map[string]interface{})
+
 	if !isError && !ok {
-		raw["transfers"] = getTxTransfer()
-	} else {
-		raw["transfers"] = append(transfers, getTxTransfer()[0])
+		rawTransfers = make([]map[string]interface{}, 0)
 	}
 
 	return &models.Trace{
@@ -487,10 +496,23 @@ func processBlockTrace(rawTrace interface{}) *models.Trace {
 			return raw["isError"].(bool)
 		}(),
 		Msg: func() string {
-			return raw["msg"].(string)
+			return raw["errorMsg"].(string)
 		}(),
 		Transfers: func() []*models.Transfer {
-			return make([]*models.Transfer, 0)
+			transfers := make([]*models.Transfer, len(rawTransfers))
+			for _, rawTransfer := range rawTransfers {
+				transfer := &models.Transfer{
+					Op:          rawTransfer["op"].(string),
+					Value:       rawTransfer["value"].(string),
+					From:        rawTransfer["from"].(string),
+					FromBalance: rawTransfer["fromBalance"].(string),
+					To:          rawTransfer["to"].(string),
+					ToBalance:   rawTransfer["toBalance"].(string),
+					Input:       rawTransfer["input"].(string),
+				}
+				transfers = append(transfers, transfer)
+			}
+			return transfers
 		}(),
 	}
 }
@@ -689,4 +711,40 @@ func toAvroBytes(id int, data []byte) []byte {
 	buffer.Write(data)
 
 	return buffer.Bytes()
+}
+
+func readTracer(path string) string {
+	if len(path) == 0 {
+		fatalf("Must supply path to js tracer file")
+	}
+	raw, err := ioutil.ReadFile(path)
+	if err != nil {
+		fatalf("Failed to read js tracer raw: %v", err)
+	}
+	tracer := string(raw)
+	if len(tracer) == 0 {
+		fatalf("TracerCode file is empty!")
+	}
+	return tracer
+}
+
+func noopTracer() string {
+	return "{result:function(){return{transfers:[],isError:!1,errorMsg:''}},step:function(r,t){}}"
+}
+
+func fatalf(format string, args ...interface{}) {
+	w := io.MultiWriter(os.Stdout, os.Stderr)
+	if runtime.GOOS == "windows" {
+		// The SameFile check below doesn't work on Windows.
+		// stdout is unlikely to get redirected though, so just print there.
+		w = os.Stdout
+	} else {
+		outf, _ := os.Stdout.Stat()
+		errf, _ := os.Stderr.Stat()
+		if outf != nil && errf != nil && os.SameFile(outf, errf) {
+			w = os.Stderr
+		}
+	}
+	fmt.Fprintf(w, "Fatal: "+format+"\n", args...)
+	os.Exit(1)
 }

@@ -146,7 +146,7 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
-// Also adds a JavaScriptTracer that scans for metadata inside the executed txs
+// Also adds a JavaScriptTracer that scans for internal txs
 func TraceApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, interface{}, error) {
 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
 	if err != nil {
@@ -155,7 +155,7 @@ func TraceApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *c
 	// Create a new context to be used in the EVM environment
 	context := NewEVMContext(msg, header, bc, author)
 	// Create a new JS tracer
-	tracer, _ := vm.NewJavascriptTracer(ethvm.TraceStr)
+	tracer, _ := vm.NewJavascriptTracer(ethvm.GetInstance().TracerCode())
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
 	vmenv := vm.NewEVM(context, statedb, config, vm.Config{Debug: true, Tracer: tracer})

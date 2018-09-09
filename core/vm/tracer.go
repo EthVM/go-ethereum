@@ -207,7 +207,7 @@ func (c *contractWrapper) toValue(vm *otto.Otto) otto.Value {
 	return value
 }
 
-// JavascriptTracer provides an implementation of Tracer that evaluates a
+// JavascriptTracer provides an implementation of TracerCode that evaluates a
 // Javascript function for each VM execution step.
 type JavascriptTracer struct {
 	vm       *otto.Otto             // Javascript VM instance
@@ -326,16 +326,16 @@ func wrapError(context string, err error) error {
 	}
 	return fmt.Errorf("%v    in server-side tracer function '%v'", message, context)
 }
-// CaptureStart implements the Tracer interface to initialize the tracing operation.
+// CaptureStart implements the TracerCode interface to initialize the tracing operation.
 func (jst *JavascriptTracer) CaptureStart(from common.Address, to common.Address, create bool, input []byte, gas uint64, value *big.Int) error {
 	return nil
 }
-// CaptureFault implements the Tracer interface to trace an execution fault
+// CaptureFault implements the TracerCode interface to trace an execution fault
 // while running an opcode.
 func (jst *JavascriptTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
 	return nil
 }
-// CaptureState implements the Tracer interface to trace a single step of VM execution
+// CaptureState implements the TracerCode interface to trace a single step of VM execution
 func (jst *JavascriptTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
 	if jst.err == nil {
 		jst.op.op = op

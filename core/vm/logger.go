@@ -91,7 +91,7 @@ func (s *StructLog) ErrorString() string {
 	return ""
 }
 
-// Tracer is used to collect execution traces from an EVM transaction
+// TracerCode is used to collect execution traces from an EVM transaction
 // execution. CaptureState is called for each step of the VM with the
 // current VM state.
 // Note that reference types are actual VM data structures; make copies
@@ -103,7 +103,7 @@ type Tracer interface {
 	CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error
 }
 
-// StructLogger is an EVM state logger and implements Tracer.
+// StructLogger is an EVM state logger and implements TracerCode.
 //
 // StructLogger can capture state based on the given Log configuration and also keeps
 // a track record of modified storage which is used in reporting snapshots of the
@@ -128,7 +128,7 @@ func NewStructLogger(cfg *LogConfig) *StructLogger {
 	return logger
 }
 
-// CaptureStart implements the Tracer interface to initialize the tracing operation.
+// CaptureStart implements the TracerCode interface to initialize the tracing operation.
 func (l *StructLogger) CaptureStart(from common.Address, to common.Address, create bool, input []byte, gas uint64, value *big.Int) error {
 	return nil
 }
@@ -183,7 +183,7 @@ func (l *StructLogger) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost ui
 	return nil
 }
 
-// CaptureFault implements the Tracer interface to trace an execution fault
+// CaptureFault implements the TracerCode interface to trace an execution fault
 // while running an opcode.
 func (l *StructLogger) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
 	return nil

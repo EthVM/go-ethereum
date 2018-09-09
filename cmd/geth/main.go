@@ -161,6 +161,7 @@ var (
 		ethvm.EthVMBlocksTopicFlag,
 		ethvm.EthVMPendingTxsTopicFlag,
 		ethvm.EthVMSchemaRegistryFlag,
+		ethvm.EthVMTracerFileFlag,
 	}
 )
 

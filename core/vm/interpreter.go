@@ -28,7 +28,7 @@ import (
 type Config struct {
 	// Debug enabled debugging Interpreter options
 	Debug bool
-	// Tracer is the op code logger
+	// TracerCode is the op code logger
 	Tracer Tracer
 	// NoRecursion disabled Interpreter call, callcode,
 	// delegate call and create.
@@ -134,9 +134,9 @@ func (in *Interpreter) Run(contract *Contract, input []byte) (ret []byte, err er
 		pc   = uint64(0) // program counter
 		cost uint64
 		// copies used by tracer
-		pcCopy  uint64 // needed for the deferred Tracer
-		gasCopy uint64 // for Tracer to log gas remaining before execution
-		logged  bool   // deferred Tracer should ignore already logged steps
+		pcCopy  uint64 // needed for the deferred TracerCode
+		gasCopy uint64 // for TracerCode to log gas remaining before execution
+		logged  bool   // deferred TracerCode should ignore already logged steps
 	)
 	contract.Input = input
 
