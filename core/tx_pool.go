@@ -846,8 +846,8 @@ func (pool *TxPool) addTxsLocked(txs []*types.Transaction, local bool) []error {
 	dirty := make(map[common.Address]struct{})
 	errs := make([]error, len(txs))
 
-	copyState := pool.currentState.Copy()
-	ptxs := make([]*ethvm.PendingTxIn, len(txs))
+	state := pool.currentState.Copy()
+	var pTxs []*ethvm.PendingTxIn
 
 	for i, tx := range txs {
 		var replace bool
@@ -862,8 +862,10 @@ func (pool *TxPool) addTxsLocked(txs []*types.Transaction, local bool) []error {
 				gp           = new(GasPool).AddGas(pool.chain.CurrentBlock().GasLimit())
 			)
 
-			receipt, _, tResult, _ := TraceApplyTransaction(pool.chainconfig, pool.chain.(*BlockChain), nil, gp, copyState, pool.chain.CurrentBlock().Header(), tx, totalUsedGas)
-			ptxs = append(ptxs, ethvm.NewPendingTxIn(tx, tResult, pool.signer, receipt, models.ActionQUEUED))
+			if tx != nil {
+				receipt, _, tResult, _ := TraceApplyTransaction(pool.chainconfig, pool.chain.(*BlockChain), nil, gp, state, pool.chain.CurrentBlock().Header(), tx, totalUsedGas)
+				pTxs = append(pTxs, ethvm.NewPendingTxIn(tx, tResult, pool.signer, receipt, models.ActionQUEUED))
+			}
 		}
 	}
 	// Only reprocess the internal state if something was actually added
@@ -876,7 +878,7 @@ func (pool *TxPool) addTxsLocked(txs []*types.Transaction, local bool) []error {
 	}
 
 	// Store validated pending txs into Ethvm
-	ethvm.GetInstance().ProcessPendingTxs(copyState, ptxs)
+	ethvm.GetInstance().ProcessPendingTxs(state, pTxs)
 
 	return errs
 }
