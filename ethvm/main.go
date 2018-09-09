@@ -654,28 +654,73 @@ func processPendingTx(state *state.StateDB, raw *PendingTxIn) models.PendingTx {
 	_v, _r, _s := tx.RawSignatureValues()
 
 	pTx := models.PendingTx{
-		Hash:              tx.Hash().Hex(),
-		Nonce:             int64(tx.Nonce()),
-		NonceHash:         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(tx.Nonce())).Bytes()).Hex(),
-		From:              from.Hex(),
-		FromBalance:       fromBalance.Int64(),
-		To:                to,
-		ToBalance:         toBalance(),
-		Input:             input,
-		Gas:               int64(tx.Gas()),
-		GasPrice:          tx.GasPrice().Int64(),
-		GasUsed:           int64(raw.Receipt.GasUsed),
-		CumulativeGasUsed: int64(raw.Receipt.CumulativeGasUsed),
-		ContractAddress:   contractAddress,
-		LogsBloom:         raw.Receipt.Bloom.Bytes(),
-		Value:             value.Int64(),
-		R:                 hexutil.Encode(_r.Bytes()),
-		V:                 hexutil.Encode(_v.Bytes()),
-		S:                 hexutil.Encode(_s.Bytes()),
-		Status:            int64(raw.Receipt.Status),
-		Logs:              processBlockLogs(raw.Receipt),
-		Trace:             processBlockTrace(raw.Trace),
-		TxStatus:          raw.Action,
+		Hash: tx.Hash().Hex(),
+		Nonce: models.UnionNullLong{
+			Long:      int64(tx.Nonce()),
+			UnionType: models.UnionNullLongTypeEnumLong,
+		},
+		NonceHash: models.UnionNullString{
+			String:    crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(tx.Nonce())).Bytes()).Hex(),
+			UnionType: models.UnionNullStringTypeEnumString,
+		},
+		From: models.UnionNullString{
+			String:    from.Hex(),
+			UnionType: models.UnionNullStringTypeEnumString,
+		},
+		FromBalance: models.UnionNullLong{
+			Long:      fromBalance.Int64(),
+			UnionType: models.UnionNullLongTypeEnumLong,
+		},
+		To:        to,
+		ToBalance: toBalance(),
+		Input: models.UnionNullBytes{
+			Bytes:     input,
+			UnionType: models.UnionNullBytesTypeEnumBytes,
+		},
+		Gas: models.UnionNullLong{
+			Long:      int64(tx.Gas()),
+			UnionType: models.UnionNullLongTypeEnumLong,
+		},
+		GasPrice: models.UnionNullLong{
+			Long:      tx.GasPrice().Int64(),
+			UnionType: models.UnionNullLongTypeEnumLong,
+		},
+		GasUsed: models.UnionNullLong{
+			Long:      int64(raw.Receipt.GasUsed),
+			UnionType: models.UnionNullLongTypeEnumLong,
+		},
+		CumulativeGasUsed: models.UnionNullLong{
+			Long:      int64(raw.Receipt.CumulativeGasUsed),
+			UnionType: models.UnionNullLongTypeEnumLong,
+		},
+		ContractAddress: contractAddress,
+		LogsBloom: models.UnionNullBytes{
+			Bytes:     raw.Receipt.Bloom.Bytes(),
+			UnionType: models.UnionNullBytesTypeEnumBytes,
+		},
+		Value: models.UnionNullLong{
+			Long:      value.Int64(),
+			UnionType: models.UnionNullLongTypeEnumLong,
+		},
+		R: models.UnionNullString{
+			String:    hexutil.Encode(_r.Bytes()),
+			UnionType: models.UnionNullStringTypeEnumString,
+		},
+		V: models.UnionNullString{
+			String:    hexutil.Encode(_v.Bytes()),
+			UnionType: models.UnionNullStringTypeEnumString,
+		},
+		S: models.UnionNullString{
+			String:    hexutil.Encode(_s.Bytes()),
+			UnionType: models.UnionNullStringTypeEnumString,
+		},
+		Status: models.UnionNullLong{
+			Long:      int64(raw.Receipt.Status),
+			UnionType: models.UnionNullLongTypeEnumLong,
+		},
+		Logs:     processBlockLogs(raw.Receipt),
+		Trace:    processBlockTrace(raw.Trace),
+		TxStatus: raw.Action,
 	}
 
 	return pTx
@@ -685,6 +730,12 @@ func processSimplePendingTxs(raw *PendingTxIn) models.PendingTx {
 	pTx := models.PendingTx{
 		Hash:     raw.Tx.Hash().Hex(),
 		TxStatus: raw.Action,
+		Logs:     make([]*models.Log, 0),
+		Trace: &models.Trace{
+			IsError:   false,
+			Msg:       "",
+			Transfers: make([]*models.Transfer, 0),
+		},
 	}
 	return pTx
 }
