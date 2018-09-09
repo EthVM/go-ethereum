@@ -857,12 +857,9 @@ func (pool *TxPool) addTxsLocked(txs []*types.Transaction, local bool) []error {
 		}
 
 		if errs[i] != nil {
-			var (
-				totalUsedGas = new(uint64)
-				gp           = new(GasPool).AddGas(pool.chain.CurrentBlock().GasLimit())
-			)
-
 			if tx != nil {
+				totalUsedGas := new(uint64)
+				gp := new(GasPool).AddGas(pool.chain.CurrentBlock().GasLimit())
 				receipt, _, tResult, _ := TraceApplyTransaction(pool.chainconfig, pool.chain.(*BlockChain), nil, gp, state, pool.chain.CurrentBlock().Header(), tx, totalUsedGas)
 				pTxs = append(pTxs, ethvm.NewPendingTxIn(tx, tResult, pool.signer, receipt, models.ActionQUEUED))
 			}

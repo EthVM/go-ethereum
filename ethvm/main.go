@@ -51,10 +51,22 @@ var (
 		Usage: "Specifies a list of kafka brokers to connect",
 	}
 
+	// EthVMEnableBlocksTopicFlag Ignores writing block information to Kafka
+	EthVMIgnoreBlocksTopicFlag = cli.BoolFlag{
+		Name:  "ethvm-ignore-blocks-topic",
+		Usage: "Ignores writing block information to Kafka",
+	}
+
 	// EthVMBlocksTopicFlag Name of the kafka block topic
 	EthVMBlocksTopicFlag = cli.StringFlag{
 		Name:  "ethvm-blocks-topic",
 		Usage: "Name of the kafka block topic",
+	}
+
+	// EthVMEnableBlocksTopicFlag Ignores writing pending txs information to Kafka
+	EthVMIgnorePendingTxsTopicFlag = cli.BoolFlag{
+		Name:  "ethvm-ignore-pending-txs-topic",
+		Usage: "Ignores writing pending txs information to Kafka",
 	}
 
 	// EthVMPendingTxsTopicFlag Name of the kafka pending txs topic
@@ -250,6 +262,10 @@ type EthVM struct {
 	brokers              string
 	schemaRegistryClient registry.SchemaRegistryClient
 
+	// Kafka - Ignore
+	ignoreProcessingBlocks     bool
+	ignoreProcessingPendingTxs bool
+
 	// Kafka - Topics
 	blocksTopic string
 	pTxsTopic   string
@@ -293,6 +309,12 @@ func GetInstance() *EthVM {
 			}
 			return registry.NewSchemaRegistryClient([]string{url})
 		}(),
+		ignoreProcessingBlocks: func() bool {
+			return ctx.GlobalBool(EthVMIgnoreBlocksTopicFlag.Name)
+		}(),
+		ignoreProcessingPendingTxs: func() bool {
+			return ctx.GlobalBool(EthVMIgnorePendingTxsTopicFlag.Name)
+		}(),
 		blocksTopic: func() string {
 			topic := "raw-blocks"
 			if ctx.GlobalString(EthVMBlocksTopicFlag.Name) != "" {
@@ -310,10 +332,10 @@ func GetInstance() *EthVM {
 		traceJsCode: func() string {
 			if ctx.GlobalString(EthVMPendingTxsTopicFlag.Name) != "" {
 				path := ctx.GlobalString(EthVMPendingTxsTopicFlag.Name)
-				return readTracer(path)
+				return readJsTracer(path)
 			}
 
-			return noopTracer()
+			return noopJsTracer()
 		}(),
 	}
 	return instance
@@ -362,7 +384,7 @@ func (e *EthVM) Connect() {
 
 // ProcessBlock Adds a new Block to EthVM
 func (e *EthVM) ProcessBlock(state *state.StateDB, blockIn *BlockIn) {
-	if !e.isEnabled() {
+	if !e.isEnabled() || e.ignoreProcessingBlocks {
 		return
 	}
 
@@ -378,7 +400,7 @@ func (e *EthVM) ProcessBlock(state *state.StateDB, blockIn *BlockIn) {
 
 // ProcessPendingTx Validates and store pending tx into DB
 func (e *EthVM) ProcessPendingTx(state *state.StateDB, pTx *PendingTxIn) {
-	if !e.isEnabled() {
+	if !e.isEnabled() || e.ignoreProcessingPendingTxs {
 		return
 	}
 
@@ -393,7 +415,7 @@ func (e *EthVM) ProcessPendingTx(state *state.StateDB, pTx *PendingTxIn) {
 
 // ProcessPendingTxs Validates and store pending txs into DB
 func (e *EthVM) ProcessPendingTxs(state *state.StateDB, pTxs []*PendingTxIn) {
-	if !e.isEnabled() {
+	if !e.isEnabled() || e.ignoreProcessingPendingTxs {
 		return
 	}
 
@@ -821,7 +843,7 @@ func toAvroBytes(id int, data []byte) []byte {
 	return buffer.Bytes()
 }
 
-func readTracer(path string) string {
+func readJsTracer(path string) string {
 	if len(path) == 0 {
 		fatalf("Must supply path to js tracer file")
 	}
@@ -836,7 +858,7 @@ func readTracer(path string) string {
 	return tracer
 }
 
-func noopTracer() string {
+func noopJsTracer() string {
 	return "{result:function(){return{transfers:[],isError:!1,errorMsg:''}},step:function(r,t){}}"
 }
 

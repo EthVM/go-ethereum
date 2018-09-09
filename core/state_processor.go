@@ -183,10 +183,9 @@ func TraceApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *c
 	if msg.To() == nil {
 		receipt.ContractAddress = crypto.CreateAddress(vmenv.Context.Origin, tx.Nonce())
 	}
-
 	// Set the receipt logs and create a bloom for filtering
 	receipt.Logs = statedb.GetLogs(tx.Hash())
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
-	result, _ := tracer.GetResult()
+	result, _ := tracer.GetTracerResult()
 	return receipt, gas, result, err
 }

@@ -616,3 +616,7 @@ func (jst *Tracer) GetResult() (json.RawMessage, error) {
 
 	return result, jst.err
 }
+
+func (jst *Tracer) GetTracerResult() (interface{}, error) {
+	return nil, nil
+}

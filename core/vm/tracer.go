@@ -82,7 +82,6 @@ func (ocw *opCodeWrapper) toValue(vm *otto.Otto) otto.Value {
 	return value
 }
 
-
 // memoryWrapper provides a JS wrapper around vm.Memory
 type memoryWrapper struct {
 	memory *Memory
@@ -326,15 +325,18 @@ func wrapError(context string, err error) error {
 	}
 	return fmt.Errorf("%v    in server-side tracer function '%v'", message, context)
 }
+
 // CaptureStart implements the TracerCode interface to initialize the tracing operation.
 func (jst *JavascriptTracer) CaptureStart(from common.Address, to common.Address, create bool, input []byte, gas uint64, value *big.Int) error {
 	return nil
 }
+
 // CaptureFault implements the TracerCode interface to trace an execution fault
 // while running an opcode.
 func (jst *JavascriptTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
 	return nil
 }
+
 // CaptureState implements the TracerCode interface to trace a single step of VM execution
 func (jst *JavascriptTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
 	if jst.err == nil {
@@ -379,4 +381,65 @@ func (jst *JavascriptTracer) GetResult() (result interface{}, err error) {
 		err = wrapError("result", err)
 	}
 	return
+}
+
+func (jst *JavascriptTracer) GetTracerResult() (interface{}, error) {
+	return nil, nil
+}
+
+// InternalTxsTracer provides an implementation that logs each internal txs produced by smart contracts.
+type InternalTxsTracer struct {
+}
+
+// NewInternalTxsTracer instantiates a new InternalTxsTracer instance.
+func NewInternalTxsTracer() (*InternalTxsTracer, error) {
+	return nil, nil
+}
+
+func (itc *InternalTxsTracer) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
+	return nil
+}
+
+func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
+	return nil
+}
+
+func (itc *InternalTxsTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
+	return nil
+}
+
+func (itc *InternalTxsTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
+	return nil
+}
+
+func (itc *InternalTxsTracer) GetTracerResult() (interface{}, error) {
+	return nil, nil
+}
+
+// NoopTracer provides a tracer implementation that does nothing.
+type NoopTracer struct {
+}
+
+func NewNoopTracer() (*NoopTracer, error) {
+	return &NoopTracer{}, nil
+}
+
+func (noop *NoopTracer) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
+	return nil
+}
+
+func (noop *NoopTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
+	return nil
+}
+
+func (noop *NoopTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
+	return nil
+}
+
+func (noop *NoopTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
+	return nil
+}
+
+func (noop *NoopTracer) GetTracerResult() (interface{}, error) {
+	return nil, nil
 }
