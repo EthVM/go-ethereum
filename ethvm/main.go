@@ -210,7 +210,7 @@ func pendingTxBytes(schemaId int, ptx models.PendingTx) []byte {
 	var buf bytes.Buffer
 	ptx.Serialize(&buf)
 
-	return toAvroBytes(2, buf.Bytes())
+	return toAvroBytes(schemaId, buf.Bytes())
 }
 
 func NewPendingTxIn(tx *types.Transaction, trace interface{}, signer types.Signer, receipt *types.Receipt, action models.Action) *PendingTxIn {
