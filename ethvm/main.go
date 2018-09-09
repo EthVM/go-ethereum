@@ -728,9 +728,66 @@ func processPendingTx(state *state.StateDB, raw *PendingTxIn) models.PendingTx {
 
 func processSimplePendingTxs(raw *PendingTxIn) models.PendingTx {
 	pTx := models.PendingTx{
+		// Updated data
 		Hash:     raw.Tx.Hash().Hex(),
 		TxStatus: raw.Action,
-		Logs:     make([]*models.Log, 0),
+
+		// Null data
+		Nonce: models.UnionNullLong{
+			UnionType: models.UnionNullLongTypeEnumNull,
+		},
+		NonceHash: models.UnionNullString{
+			UnionType: models.UnionNullStringTypeEnumNull,
+		},
+		From: models.UnionNullString{
+			UnionType: models.UnionNullStringTypeEnumNull,
+		},
+		FromBalance: models.UnionNullLong{
+			UnionType: models.UnionNullLongTypeEnumNull,
+		},
+		To: models.UnionNullString{
+			UnionType: models.UnionNullStringTypeEnumNull,
+		},
+		ToBalance: models.UnionNullLong{
+			UnionType: models.UnionNullLongTypeEnumNull,
+		},
+		Input: models.UnionNullBytes{
+			UnionType: models.UnionNullBytesTypeEnumNull,
+		},
+		Gas: models.UnionNullLong{
+			UnionType: models.UnionNullLongTypeEnumNull,
+		},
+		GasPrice: models.UnionNullLong{
+			UnionType: models.UnionNullLongTypeEnumNull,
+		},
+		GasUsed: models.UnionNullLong{
+			UnionType: models.UnionNullLongTypeEnumNull,
+		},
+		CumulativeGasUsed: models.UnionNullLong{
+			UnionType: models.UnionNullLongTypeEnumNull,
+		},
+		ContractAddress: models.UnionNullString{
+			UnionType: models.UnionNullStringTypeEnumNull,
+		},
+		LogsBloom: models.UnionNullBytes{
+			UnionType: models.UnionNullBytesTypeEnumNull,
+		},
+		Value: models.UnionNullLong{
+			UnionType: models.UnionNullLongTypeEnumNull,
+		},
+		R: models.UnionNullString{
+			UnionType: models.UnionNullStringTypeEnumNull,
+		},
+		V: models.UnionNullString{
+			UnionType: models.UnionNullStringTypeEnumNull,
+		},
+		S: models.UnionNullString{
+			UnionType: models.UnionNullStringTypeEnumNull,
+		},
+		Status: models.UnionNullLong{
+			UnionType: models.UnionNullLongTypeEnumNull,
+		},
+		Logs: make([]*models.Log, 0),
 		Trace: &models.Trace{
 			IsError:   false,
 			Msg:       "",
