@@ -146,16 +146,15 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 // and uses the input parameters for its environment. It returns the receipt
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
-// Also adds a JavaScriptTracer that scans for internal txs
-func TraceApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, interface{}, error) {
+// Also adds a custom EVM tracer that scans for internal txs
+func TraceApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, map[string]interface{}, error) {
 	msg, err := tx.AsMessage(types.MakeSigner(config, header.Number))
 	if err != nil {
 		return nil, 0, nil, err
 	}
 	// Create a new context to be used in the EVM environment
 	context := NewEVMContext(msg, header, bc, author)
-	// Create a new JS tracer
-	tracer, _ := vm.NewJavascriptTracer(ethvm.GetInstance().TracerCode())
+	tracer, _ := createVmTracer()
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
 	vmenv := vm.NewEVM(context, statedb, config, vm.Config{Debug: true, Tracer: tracer})
@@ -164,7 +163,6 @@ func TraceApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *c
 	if err != nil {
 		return nil, 0, nil, err
 	}
-
 	// Update the state with pending changes
 	var root []byte
 	if config.IsByzantium(header.Number) {
@@ -188,4 +186,15 @@ func TraceApplyTransaction(config *params.ChainConfig, bc *BlockChain, author *c
 	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
 	result, _ := tracer.GetTracerResult()
 	return receipt, gas, result, err
+}
+
+func createVmTracer() (vm.Tracer, error) {
+	tracer := ethvm.GetInstance().Tracer()
+	switch tracer {
+	case ethvm.InternalTxsTracer:
+		return vm.NewInternalTxsTracer()
+	case ethvm.NoopTracer:
+		return vm.NewNoopTracer()
+	}
+	panic("Invalid tracer!")
 }

@@ -19,7 +19,6 @@ package ethvm
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/big"
 	"os"
 	"runtime"
@@ -38,9 +37,20 @@ import (
 	"gopkg.in/urfave/cli.v1"
 )
 
+const (
+	NonStatTy = iota
+	CanonStatTy
+	SideStatTy
+)
+
+const (
+	InternalTxsTracer = iota
+	NoopTracer
+)
+
 var (
 	// EthVMFlag Enables ETHVM to listen on Ethereum data
-	EthVMFlag = cli.BoolFlag{
+	EthVMEnabledFlag = cli.BoolFlag{
 		Name:  "ethvm",
 		Usage: "Enables EthVM to listen every data produced on this node",
 	}
@@ -53,7 +63,7 @@ var (
 
 	// EthVMEnableBlocksTopicFlag Ignores writing block information to Kafka
 	EthVMIgnoreBlocksTopicFlag = cli.BoolFlag{
-		Name:  "ethvm-ignore-blocks-topic",
+		Name:  "ethvm-ignore-processing-blocks",
 		Usage: "Ignores writing block information to Kafka",
 	}
 
@@ -65,7 +75,7 @@ var (
 
 	// EthVMEnableBlocksTopicFlag Ignores writing pending txs information to Kafka
 	EthVMIgnorePendingTxsTopicFlag = cli.BoolFlag{
-		Name:  "ethvm-ignore-pending-txs-topic",
+		Name:  "ethvm-ignore-processing-pending-txs",
 		Usage: "Ignores writing pending txs information to Kafka",
 	}
 
@@ -81,10 +91,11 @@ var (
 		Usage: "URL of the schema registry",
 	}
 
-	// EthVMTracerFileFlag File that contains a Javascript tracer that logs operations on the EVM
-	EthVMTracerFileFlag = cli.StringFlag{
-		Name:  "ethvm-tracer-file",
-		Usage: "File that contains a Javascript tracer that logs operations on the EVM",
+	// EthVMTracer Name of the tracer to trace transactions on the EVM
+	EthVMTracerFlag = cli.StringFlag{
+		Name:  "ethvm-tracer",
+		Value: "internal-txs-tracer",
+		Usage: "Name of the tracer to add to EVM (options: internal-txs-tracer, noop-tracer)",
 	}
 
 	// Block rewards
@@ -135,15 +146,18 @@ func (in *BlockIn) bytes(schemaId int, state *state.StateDB) []byte {
 		}
 		return uncles
 	}()
+	stats := models.UnionNullBlockStats{
+		UnionType: models.UnionNullBlockStatsTypeEnumNull,
+	}
 
 	b := &models.Block{
 		Number:           header.Number.Int64(),
 		Hash:             header.Hash().Hex(),
 		ParentHash:       header.Hash().Hex(),
 		MixDigest:        header.MixDigest.Hex(),
-		IsUncle:          in.IsUncle,
-		IsCanonical:      in.IsCanonical,
-		Timestamp:        header.Time.Int64(),
+		Uncle:            in.IsUncle,
+		Status:           int32(in.Status),
+		Timestamp:        header.Time.Int64() * 1000,
 		Nonce:            int64(header.Nonce.Uint64()),
 		Sha3Uncles:       header.UncleHash.Hex(),
 		LogsBloom:        hexutil.Encode(header.Bloom.Bytes()),
@@ -153,7 +167,7 @@ func (in *BlockIn) bytes(schemaId int, state *state.StateDB) []byte {
 		Difficulty:       header.Difficulty.Int64(),
 		TotalDifficulty:  td,
 		ExtraData:        header.Extra,
-		Size:             int64(hexutil.Uint64(block.Size())),
+		Size:             int64(uint64(block.Size())),
 		GasLimit:         int64(header.GasLimit),
 		GasUsed:          int64(header.GasUsed),
 		Transactions:     txs,
@@ -161,6 +175,7 @@ func (in *BlockIn) bytes(schemaId int, state *state.StateDB) []byte {
 		Uncles:           uncles,
 		BlockReward:      blockReward,
 		UncleReward:      uncleReward,
+		Stats:            stats,
 	}
 
 	var buf bytes.Buffer
@@ -203,7 +218,7 @@ func NewBlockIn(block *types.Block, txBlocks *[]BlockTx, td *big.Int, signer typ
 					return r
 				}
 			}
-			return big.NewInt(0)
+			return big0
 		},
 		Status: status,
 	}
@@ -244,7 +259,7 @@ func UpdatePendingTxIn(tx *types.Transaction, action models.Action) *PendingTxIn
 
 type BlockTx struct {
 	Tx        *types.Transaction
-	Trace     interface{}
+	Trace     map[string]interface{}
 	Receipt   *types.Receipt
 	Logs      []*types.Log
 	Timestamp *big.Int
@@ -278,8 +293,8 @@ type EthVM struct {
 	blocksW *kafka.Writer
 	pTxsW   *kafka.Writer
 
-	// TracerCode
-	traceJsCode string
+	// Tracer
+	tracer int
 }
 
 // Init Saves cli.Context to be used inside EthVM
@@ -294,7 +309,7 @@ func GetInstance() *EthVM {
 	}
 
 	instance = &EthVM{
-		enabled: ctx.GlobalBool(EthVMFlag.Name),
+		enabled: ctx.GlobalBool(EthVMEnabledFlag.Name),
 		brokers: func() string {
 			b := "localhost:9092"
 			if ctx.GlobalString(EthVMBrokersFlag.Name) != "" {
@@ -329,13 +344,13 @@ func GetInstance() *EthVM {
 			}
 			return topic
 		}(),
-		traceJsCode: func() string {
-			if ctx.GlobalString(EthVMPendingTxsTopicFlag.Name) != "" {
-				path := ctx.GlobalString(EthVMPendingTxsTopicFlag.Name)
-				return readJsTracer(path)
+		tracer: func() int {
+			tracer := InternalTxsTracer
+			if ctx.GlobalString(EthVMTracerFlag.Name) != "" {
+				rawTracer := ctx.GlobalString(EthVMTracerFlag.Name)
+				tracer = toTracer(rawTracer)
 			}
-
-			return noopJsTracer()
+			return tracer
 		}(),
 	}
 	return instance
@@ -404,13 +419,15 @@ func (e *EthVM) ProcessPendingTx(state *state.StateDB, pTx *PendingTxIn) {
 		return
 	}
 
-	err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-		Key:   []byte(pTx.Tx.Hash().Hex()),
-		Value: pendingTxBytes(e.pTxsSchemaId, processPendingTx(state, pTx)),
-	})
-	if err != nil {
-		panic(err)
-	}
+	go func() {
+		err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+			Key:   []byte(pTx.Tx.Hash().Hex()),
+			Value: pendingTxBytes(e.pTxsSchemaId, processPendingTx(state, pTx)),
+		})
+		if err != nil {
+			panic(err)
+		}
+	}()
 }
 
 // ProcessPendingTxs Validates and store pending txs into DB
@@ -420,19 +437,21 @@ func (e *EthVM) ProcessPendingTxs(state *state.StateDB, pTxs []*PendingTxIn) {
 	}
 
 	// Send to kafka
-	for _, pTx := range pTxs {
-		err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
-			Key:   []byte(pTx.Tx.Hash().Hex()),
-			Value: pendingTxBytes(e.pTxsSchemaId, processPendingTx(state, pTx)),
-		})
-		if err != nil {
-			panic(err)
+	go func() {
+		for _, pTx := range pTxs {
+			err := e.pTxsW.WriteMessages(context.Background(), kafka.Message{
+				Key:   []byte(pTx.Tx.Hash().Hex()),
+				Value: pendingTxBytes(e.pTxsSchemaId, processPendingTx(state, pTx)),
+			})
+			if err != nil {
+				panic(err)
+			}
 		}
-	}
+	}()
 }
 
-func (e *EthVM) TracerCode() string {
-	return e.traceJsCode
+func (e *EthVM) Tracer() int {
+	return e.tracer
 }
 
 // --------------------
@@ -501,8 +520,8 @@ func processBlockTrace(rawTrace interface{}) *models.Trace {
 	raw, ok := rawTrace.(map[string]interface{})
 	if !ok {
 		raw = map[string]interface{}{
-			"isError":  true,
-			"errorMsg": rawTrace,
+			"error":  true,
+			"reason": rawTrace,
 		}
 	}
 
@@ -518,7 +537,11 @@ func processBlockTrace(rawTrace interface{}) *models.Trace {
 			return raw["isError"].(bool)
 		}(),
 		Msg: func() string {
-			return raw["errorMsg"].(string)
+			rawErrorMsg := raw["errorMsg"]
+			if rawErrorMsg != nil {
+				return rawErrorMsg.(string)
+			}
+			return ""
 		}(),
 		Transfers: func() []*models.Transfer {
 			transfers := make([]*models.Transfer, len(rawTransfers))
@@ -843,23 +866,15 @@ func toAvroBytes(id int, data []byte) []byte {
 	return buffer.Bytes()
 }
 
-func readJsTracer(path string) string {
-	if len(path) == 0 {
-		fatalf("Must supply path to js tracer file")
+func toTracer(s string) int {
+	switch s {
+	case "noop-tracer":
+		return NoopTracer
+	case "internal-txs-tracer":
+		return InternalTxsTracer
 	}
-	raw, err := ioutil.ReadFile(path)
-	if err != nil {
-		fatalf("Failed to read js tracer raw: %v", err)
-	}
-	tracer := string(raw)
-	if len(tracer) == 0 {
-		fatalf("TracerCode file is empty!")
-	}
-	return tracer
-}
-
-func noopJsTracer() string {
-	return "{result:function(){return{transfers:[],isError:!1,errorMsg:''}},step:function(r,t){}}"
+	fatalf("Invalid tracer option specified. Supported options: noop-tracer, internal-txs-tracer.")
+	return 0
 }
 
 func fatalf(format string, args ...interface{}) {

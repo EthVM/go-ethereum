@@ -212,11 +212,11 @@ func readBlock(r io.Reader) (*Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.IsUncle, err = readBool(r)
+	str.Uncle, err = readBool(r)
 	if err != nil {
 		return nil, err
 	}
-	str.IsCanonical, err = readBool(r)
+	str.Status, err = readInt(r)
 	if err != nil {
 		return nil, err
 	}
@@ -288,11 +288,42 @@ func readBlock(r io.Reader) (*Block, error) {
 	if err != nil {
 		return nil, err
 	}
+	str.Stats, err = readUnionNullBlockStats(r)
+	if err != nil {
+		return nil, err
+	}
 	str.Transactions, err = readArrayTransaction(r)
 	if err != nil {
 		return nil, err
 	}
 	str.Uncles, err = readArrayString(r)
+	if err != nil {
+		return nil, err
+	}
+
+	return str, nil
+}
+
+func readBlockStats(r io.Reader) (*BlockStats, error) {
+	var str = &BlockStats{}
+	var err error
+	str.BlockTimeMs, err = readInt(r)
+	if err != nil {
+		return nil, err
+	}
+	str.NumFailedTxs, err = readInt(r)
+	if err != nil {
+		return nil, err
+	}
+	str.NumSuccessfulTxs, err = readInt(r)
+	if err != nil {
+		return nil, err
+	}
+	str.AvgGasPrice, err = readLong(r)
+	if err != nil {
+		return nil, err
+	}
+	str.AvgTxsFees, err = readLong(r)
 	if err != nil {
 		return nil, err
 	}
@@ -663,6 +694,33 @@ func readTransfer(r io.Reader) (*Transfer, error) {
 	return str, nil
 }
 
+func readUnionNullBlockStats(r io.Reader) (UnionNullBlockStats, error) {
+	field, err := readLong(r)
+	var unionStr UnionNullBlockStats
+	if err != nil {
+		return unionStr, err
+	}
+	unionStr.UnionType = UnionNullBlockStatsTypeEnum(field)
+	switch unionStr.UnionType {
+	case UnionNullBlockStatsTypeEnumNull:
+		val, err := readNull(r)
+		if err != nil {
+			return unionStr, err
+		}
+		unionStr.Null = val
+	case UnionNullBlockStatsTypeEnumBlockStats:
+		val, err := readBlockStats(r)
+		if err != nil {
+			return unionStr, err
+		}
+		unionStr.BlockStats = val
+
+	default:
+		return unionStr, fmt.Errorf("Invalid value for UnionNullBlockStats")
+	}
+	return unionStr, nil
+}
+
 func readUnionNullBytes(r io.Reader) (UnionNullBytes, error) {
 	field, err := readLong(r)
 	var unionStr UnionNullBytes
@@ -818,11 +876,11 @@ func writeBlock(r *Block, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeBool(r.IsUncle, w)
+	err = writeBool(r.Uncle, w)
 	if err != nil {
 		return err
 	}
-	err = writeBool(r.IsCanonical, w)
+	err = writeInt(r.Status, w)
 	if err != nil {
 		return err
 	}
@@ -894,11 +952,40 @@ func writeBlock(r *Block, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	err = writeUnionNullBlockStats(r.Stats, w)
+	if err != nil {
+		return err
+	}
 	err = writeArrayTransaction(r.Transactions, w)
 	if err != nil {
 		return err
 	}
 	err = writeArrayString(r.Uncles, w)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+func writeBlockStats(r *BlockStats, w io.Writer) error {
+	var err error
+	err = writeInt(r.BlockTimeMs, w)
+	if err != nil {
+		return err
+	}
+	err = writeInt(r.NumFailedTxs, w)
+	if err != nil {
+		return err
+	}
+	err = writeInt(r.NumSuccessfulTxs, w)
+	if err != nil {
+		return err
+	}
+	err = writeLong(r.AvgGasPrice, w)
+	if err != nil {
+		return err
+	}
+	err = writeLong(r.AvgTxsFees, w)
 	if err != nil {
 		return err
 	}
@@ -1236,6 +1323,21 @@ func writeTransfer(r *Transfer, w io.Writer) error {
 	}
 
 	return nil
+}
+
+func writeUnionNullBlockStats(r UnionNullBlockStats, w io.Writer) error {
+	err := writeLong(int64(r.UnionType), w)
+	if err != nil {
+		return err
+	}
+	switch r.UnionType {
+	case UnionNullBlockStatsTypeEnumNull:
+		return writeNull(r.Null, w)
+	case UnionNullBlockStatsTypeEnumBlockStats:
+		return writeBlockStats(r.BlockStats, w)
+
+	}
+	return fmt.Errorf("Invalid value for UnionNullBlockStats")
 }
 
 func writeUnionNullBytes(r UnionNullBytes, w io.Writer) error {

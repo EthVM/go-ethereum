@@ -383,12 +383,15 @@ func (jst *JavascriptTracer) GetResult() (result interface{}, err error) {
 	return
 }
 
-func (jst *JavascriptTracer) GetTracerResult() (interface{}, error) {
+func (jst *JavascriptTracer) GetTracerResult() (map[string]interface{}, error) {
 	return nil, nil
 }
 
 // InternalTxsTracer provides an implementation that logs each internal txs produced by smart contracts.
 type InternalTxsTracer struct {
+	error     bool
+	reason    string
+	transfers []interface{}
 }
 
 // NewInternalTxsTracer instantiates a new InternalTxsTracer instance.
@@ -396,50 +399,159 @@ func NewInternalTxsTracer() (*InternalTxsTracer, error) {
 	return nil, nil
 }
 
+// CaptureStart implements the TracerCode interface to initialize the tracing operation.
 func (itc *InternalTxsTracer) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
 	return nil
 }
 
+// CaptureState implements the TracerCode interface to trace a single step of VM execution
 func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
+	switch op {
+	case CREATE: // Creates a new account with associated code
+		data := stack.Data()
+
+		from := contract.Address()
+		fromBalance := env.StateDB.GetBalance(from)
+		nonce := env.StateDB.GetNonce(from)
+		to := crypto.CreateAddress(from, nonce)
+		toBalance := env.StateDB.GetBalance(to)
+		value := data[len(data)-1]
+
+		offset := data[len(data)-2].Int64()
+		size := offset + data[len(data)-3].Int64()
+		input := memory.Get(offset, size)
+
+		transfer := map[string]interface{}{
+			"op":          op,
+			"value":       value,
+			"from":        from,
+			"fromBalance": fromBalance,
+			"to":          to,
+			"toBalance":   toBalance,
+			"input":       input,
+		}
+		itc.transfers = append(itc.transfers, transfer)
+		break
+
+	case CALL: // Message-call into an account
+		data := stack.Data()
+
+		value := data[len(data)-3]
+		from := contract.Address()
+		fromBalance := env.StateDB.GetBalance(from)
+		to := common.BytesToAddress(data[len(data)-2].Bytes())
+		toBalance := env.StateDB.GetBalance(common.BytesToAddress(data[len(data)-2].Bytes()))
+
+		offset := data[3].Int64()
+		size := offset + data[4].Int64()
+		input := memory.Get(offset, size)
+
+		transfer := map[string]interface{}{
+			"op":          op,
+			"value":       value,
+			"from":        from,
+			"fromBalance": fromBalance,
+			"to":          to,
+			"toBalance":   toBalance,
+			"input":       input,
+		}
+		itc.transfers = append(itc.transfers, transfer)
+		break
+
+	case CALLCODE: // Message-call into this account with alternative account's code
+		break
+
+	case DELEGATECALL: // Message-call into this account with an alternative account's code, but persisting into this account with an alternative account's code
+		break
+
+	case SELFDESTRUCT: // Halt execution and register account for later deletion
+		data := stack.Data()
+
+		value := data[len(data)-3]
+		from := contract.Address()
+		fromBalance := env.StateDB.GetBalance(from)
+		to := common.BytesToAddress(data[len(data)-1].Bytes())
+		toBalance := env.StateDB.GetBalance(common.BytesToAddress(data[len(data)-1].Bytes()))
+		input := make([]byte, 0)
+
+		transfer := map[string]interface{}{
+			"op":          op,
+			"value":       value,
+			"from":        from,
+			"fromBalance": fromBalance,
+			"to":          to,
+			"toBalance":   toBalance,
+			"input":       input,
+		}
+		itc.transfers = append(itc.transfers, transfer)
+		break
+	}
+
+	if err != nil {
+		itc.error = true
+		itc.reason = err.Error()
+		itc.transfers = make([]interface{}, 0)
+	}
+
 	return nil
 }
 
+// CaptureFault implements the TracerCode interface to trace an execution fault while running an opcode.
 func (itc *InternalTxsTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
+	itc.error = true
+	itc.reason = err.Error()
+	itc.transfers = make([]interface{}, 0)
 	return nil
 }
 
+// CaptureEnd is called after the call finishes
 func (itc *InternalTxsTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
 	return nil
 }
 
-func (itc *InternalTxsTracer) GetTracerResult() (interface{}, error) {
-	return nil, nil
+// GetTracerResult returns accumulated result
+func (itc *InternalTxsTracer) GetTracerResult() (map[string]interface{}, error) {
+	return map[string]interface{}{
+		"error":     itc.error,
+		"reason":    itc.reason,
+		"transfers": itc.transfers,
+	}, nil
 }
 
 // NoopTracer provides a tracer implementation that does nothing.
 type NoopTracer struct {
 }
 
+// NewNoopTracer instantiates a new NoopTracer instance.
 func NewNoopTracer() (*NoopTracer, error) {
 	return &NoopTracer{}, nil
 }
 
+// CaptureStart implements the TracerCode interface to initialize the tracing operation.
 func (noop *NoopTracer) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
 	return nil
 }
 
+// CaptureState implements the TracerCode interface to trace a single step of VM execution
 func (noop *NoopTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
 	return nil
 }
 
+// CaptureFault implements the TracerCode interface to trace an execution fault while running an opcode.
 func (noop *NoopTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
 	return nil
 }
 
+// CaptureEnd is called after the call finishes
 func (noop *NoopTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
 	return nil
 }
 
-func (noop *NoopTracer) GetTracerResult() (interface{}, error) {
-	return nil, nil
+// GetTracerResult returns accumulated result
+func (noop *NoopTracer) GetTracerResult() (map[string]interface{}, error) {
+	return map[string]interface{}{
+		"error":     false,
+		"reason":    "",
+		"transfers": make([]interface{}, 0),
+	}, nil
 }

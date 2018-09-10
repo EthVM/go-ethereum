@@ -101,7 +101,7 @@ type Tracer interface {
 	CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error
 	CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error
 	CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error
-	GetTracerResult() (interface{}, error)
+	GetTracerResult() (map[string]interface{}, error)
 }
 
 // StructLogger is an EVM state logger and implements TracerCode.
@@ -203,7 +203,7 @@ func (l *StructLogger) CaptureEnd(output []byte, gasUsed uint64, t time.Duration
 	return nil
 }
 
-func (l *StructLogger) GetTracerResult() (interface{}, error) {
+func (l *StructLogger) GetTracerResult() (map[string]interface{}, error) {
 	return nil, nil
 }
 
