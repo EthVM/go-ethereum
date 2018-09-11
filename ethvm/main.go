@@ -226,7 +226,7 @@ func NewBlockIn(block *types.Block, txBlocks *[]BlockTx, td *big.Int, signer typ
 
 type PendingTxIn struct {
 	Tx      *types.Transaction
-	Trace   interface{}
+	Trace   map[string]interface{}
 	Signer  types.Signer
 	Receipt *types.Receipt
 	Action  models.Action
@@ -240,7 +240,7 @@ func pendingTxBytes(schemaId int, ptx models.PendingTx) []byte {
 	return toAvroBytes(schemaId, buf.Bytes())
 }
 
-func NewPendingTxIn(tx *types.Transaction, trace interface{}, signer types.Signer, receipt *types.Receipt, action models.Action) *PendingTxIn {
+func NewPendingTxIn(tx *types.Transaction, trace map[string]interface{}, signer types.Signer, receipt *types.Receipt, action models.Action) *PendingTxIn {
 	return &PendingTxIn{
 		Tx:      tx,
 		Trace:   trace,
@@ -516,44 +516,27 @@ func processBlockLogs(receipt *types.Receipt) []*models.Log {
 	return logs
 }
 
-func processBlockTrace(rawTrace interface{}) *models.Trace {
-	raw, ok := rawTrace.(map[string]interface{})
-	if !ok {
-		raw = map[string]interface{}{
-			"error":  true,
-			"reason": rawTrace,
-		}
-	}
-
-	isError := raw["isError"].(bool)
-	rawTransfers, ok := raw["rawTransfers"].([]map[string]interface{})
-
-	if !isError && !ok {
-		rawTransfers = make([]map[string]interface{}, 0)
-	}
+func processBlockTrace(raw map[string]interface{}) *models.Trace {
+	rawTransfers, _ := raw["transfers"].([]map[string]interface{})
 
 	return &models.Trace{
 		IsError: func() bool {
-			return raw["isError"].(bool)
+			return raw["error"].(bool)
 		}(),
 		Msg: func() string {
-			rawErrorMsg := raw["errorMsg"]
-			if rawErrorMsg != nil {
-				return rawErrorMsg.(string)
-			}
-			return ""
+			return raw["reason"].(string)
 		}(),
 		Transfers: func() []*models.Transfer {
 			transfers := make([]*models.Transfer, len(rawTransfers))
 			for _, rawTransfer := range rawTransfers {
 				transfer := &models.Transfer{
 					Op:          rawTransfer["op"].(string),
-					Value:       rawTransfer["value"].(string),
+					Value:       "", //rawTransfer["value"].(uint64),
 					From:        rawTransfer["from"].(string),
-					FromBalance: rawTransfer["fromBalance"].(string),
+					FromBalance: "", //rawTransfer["fromBalance"].(uint64),
 					To:          rawTransfer["to"].(string),
-					ToBalance:   rawTransfer["toBalance"].(string),
-					Input:       rawTransfer["input"].(string),
+					ToBalance:   "", //rawTransfer["toBalance"].(uint64),
+					Input:       "", //rawTransfer["input"].([]byte),
 				}
 				transfers = append(transfers, transfer)
 			}
