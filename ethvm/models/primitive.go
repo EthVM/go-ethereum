@@ -77,6 +77,36 @@ func readAction(r io.Reader) (Action, error) {
 	return Action(val), err
 }
 
+func readArrayBytes(r io.Reader) ([][]byte, error) {
+	var err error
+	var blkSize int64
+	var arr = make([][]byte, 0)
+	for {
+		blkSize, err = readLong(r)
+		if err != nil {
+			return nil, err
+		}
+		if blkSize == 0 {
+			break
+		}
+		if blkSize < 0 {
+			blkSize = -blkSize
+			_, err = readLong(r)
+			if err != nil {
+				return nil, err
+			}
+		}
+		for i := int64(0); i < blkSize; i++ {
+			elem, err := readBytes(r)
+			if err != nil {
+				return nil, err
+			}
+			arr = append(arr, elem)
+		}
+	}
+	return arr, nil
+}
+
 func readArrayLog(r io.Reader) ([]*Log, error) {
 	var err error
 	var blkSize int64
@@ -98,36 +128,6 @@ func readArrayLog(r io.Reader) ([]*Log, error) {
 		}
 		for i := int64(0); i < blkSize; i++ {
 			elem, err := readLog(r)
-			if err != nil {
-				return nil, err
-			}
-			arr = append(arr, elem)
-		}
-	}
-	return arr, nil
-}
-
-func readArrayString(r io.Reader) ([]string, error) {
-	var err error
-	var blkSize int64
-	var arr = make([]string, 0)
-	for {
-		blkSize, err = readLong(r)
-		if err != nil {
-			return nil, err
-		}
-		if blkSize == 0 {
-			break
-		}
-		if blkSize < 0 {
-			blkSize = -blkSize
-			_, err = readLong(r)
-			if err != nil {
-				return nil, err
-			}
-		}
-		for i := int64(0); i < blkSize; i++ {
-			elem, err := readString(r)
 			if err != nil {
 				return nil, err
 			}
@@ -200,15 +200,15 @@ func readArrayTransfer(r io.Reader) ([]*Transfer, error) {
 func readBlock(r io.Reader) (*Block, error) {
 	var str = &Block{}
 	var err error
-	str.Number, err = readLong(r)
+	str.Number, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Hash, err = readString(r)
+	str.Hash, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.ParentHash, err = readString(r)
+	str.ParentHash, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -224,67 +224,67 @@ func readBlock(r io.Reader) (*Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.Nonce, err = readLong(r)
+	str.Nonce, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.MixDigest, err = readString(r)
+	str.MixDigest, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Sha3Uncles, err = readString(r)
+	str.Sha3Uncles, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.LogsBloom, err = readString(r)
+	str.LogsBloom, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.StateRoot, err = readString(r)
+	str.StateRoot, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.TransactionsRoot, err = readString(r)
+	str.TransactionsRoot, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Miner, err = readString(r)
+	str.Miner, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Difficulty, err = readLong(r)
+	str.Difficulty, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.TotalDifficulty, err = readLong(r)
+	str.TotalDifficulty, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.ExtraData, err = readString(r)
+	str.ExtraData, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Size, err = readLong(r)
+	str.Size, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.GasLimit, err = readLong(r)
+	str.GasLimit, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.GasUsed, err = readLong(r)
+	str.GasUsed, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.TxsFees, err = readLong(r)
+	str.TxsFees, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.BlockReward, err = readLong(r)
+	str.BlockReward, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.UncleReward, err = readLong(r)
+	str.UncleReward, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +296,7 @@ func readBlock(r io.Reader) (*Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.Uncles, err = readArrayString(r)
+	str.Uncles, err = readArrayBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -319,11 +319,11 @@ func readBlockStats(r io.Reader) (*BlockStats, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.AvgGasPrice, err = readLong(r)
+	str.AvgGasPrice, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.AvgTxsFees, err = readLong(r)
+	str.AvgTxsFees, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -377,11 +377,11 @@ func readInt(r io.Reader) (int32, error) {
 func readLog(r io.Reader) (*Log, error) {
 	var str = &Log{}
 	var err error
-	str.Address, err = readString(r)
+	str.Address, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Topics, err = readArrayString(r)
+	str.Topics, err = readArrayBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -425,31 +425,31 @@ func readNull(_ io.Reader) (interface{}, error) {
 func readPendingTx(r io.Reader) (*PendingTx, error) {
 	var str = &PendingTx{}
 	var err error
-	str.Hash, err = readString(r)
+	str.Hash, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Nonce, err = readUnionNullLong(r)
+	str.Nonce, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.NonceHash, err = readUnionNullString(r)
+	str.NonceHash, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.From, err = readUnionNullString(r)
+	str.From, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.FromBalance, err = readUnionNullLong(r)
+	str.FromBalance, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.To, err = readUnionNullString(r)
+	str.To, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.ToBalance, err = readUnionNullLong(r)
+	str.ToBalance, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -457,43 +457,43 @@ func readPendingTx(r io.Reader) (*PendingTx, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.ContractAddress, err = readUnionNullString(r)
+	str.ContractAddress, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Value, err = readUnionNullLong(r)
+	str.Value, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Gas, err = readUnionNullLong(r)
+	str.Gas, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.GasPrice, err = readUnionNullLong(r)
+	str.GasPrice, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.GasUsed, err = readUnionNullLong(r)
+	str.GasUsed, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.CumulativeGasUsed, err = readUnionNullLong(r)
+	str.CumulativeGasUsed, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.V, err = readUnionNullString(r)
+	str.V, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.R, err = readUnionNullString(r)
+	str.R, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.S, err = readUnionNullString(r)
+	str.S, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Status, err = readUnionNullLong(r)
+	str.Status, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -559,11 +559,11 @@ func readTrace(r io.Reader) (*Trace, error) {
 func readTransaction(r io.Reader) (*Transaction, error) {
 	var str = &Transaction{}
 	var err error
-	str.Hash, err = readString(r)
+	str.Hash, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Root, err = readString(r)
+	str.Root, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -575,27 +575,27 @@ func readTransaction(r io.Reader) (*Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.Nonce, err = readLong(r)
+	str.Nonce, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.NonceHash, err = readString(r)
+	str.NonceHash, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.From, err = readString(r)
+	str.From, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.FromBalance, err = readLong(r)
+	str.FromBalance, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.To, err = readUnionNullString(r)
+	str.To, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.ToBalance, err = readUnionNullLong(r)
+	str.ToBalance, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -603,47 +603,47 @@ func readTransaction(r io.Reader) (*Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.ContractAddress, err = readUnionNullString(r)
+	str.ContractAddress, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Value, err = readLong(r)
+	str.Value, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Gas, err = readLong(r)
+	str.Gas, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.GasPrice, err = readLong(r)
+	str.GasPrice, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.GasUsed, err = readLong(r)
+	str.GasUsed, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.CumulativeGasUsed, err = readLong(r)
+	str.CumulativeGasUsed, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.V, err = readString(r)
+	str.V, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.R, err = readString(r)
+	str.R, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.S, err = readString(r)
+	str.S, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Status, err = readLong(r)
+	str.Status, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.LogsBloom, err = readString(r)
+	str.LogsBloom, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -662,31 +662,31 @@ func readTransaction(r io.Reader) (*Transaction, error) {
 func readTransfer(r io.Reader) (*Transfer, error) {
 	var str = &Transfer{}
 	var err error
-	str.Op, err = readString(r)
+	str.Op, err = readInt(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Value, err = readString(r)
+	str.Value, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.From, err = readString(r)
+	str.From, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.FromBalance, err = readString(r)
+	str.FromBalance, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.To, err = readString(r)
+	str.To, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.ToBalance, err = readString(r)
+	str.ToBalance, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
-	str.Input, err = readString(r)
+	str.Input, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -748,62 +748,22 @@ func readUnionNullBytes(r io.Reader) (UnionNullBytes, error) {
 	return unionStr, nil
 }
 
-func readUnionNullLong(r io.Reader) (UnionNullLong, error) {
-	field, err := readLong(r)
-	var unionStr UnionNullLong
-	if err != nil {
-		return unionStr, err
-	}
-	unionStr.UnionType = UnionNullLongTypeEnum(field)
-	switch unionStr.UnionType {
-	case UnionNullLongTypeEnumNull:
-		val, err := readNull(r)
-		if err != nil {
-			return unionStr, err
-		}
-		unionStr.Null = val
-	case UnionNullLongTypeEnumLong:
-		val, err := readLong(r)
-		if err != nil {
-			return unionStr, err
-		}
-		unionStr.Long = val
-
-	default:
-		return unionStr, fmt.Errorf("Invalid value for UnionNullLong")
-	}
-	return unionStr, nil
-}
-
-func readUnionNullString(r io.Reader) (UnionNullString, error) {
-	field, err := readLong(r)
-	var unionStr UnionNullString
-	if err != nil {
-		return unionStr, err
-	}
-	unionStr.UnionType = UnionNullStringTypeEnum(field)
-	switch unionStr.UnionType {
-	case UnionNullStringTypeEnumNull:
-		val, err := readNull(r)
-		if err != nil {
-			return unionStr, err
-		}
-		unionStr.Null = val
-	case UnionNullStringTypeEnumString:
-		val, err := readString(r)
-		if err != nil {
-			return unionStr, err
-		}
-		unionStr.String = val
-
-	default:
-		return unionStr, fmt.Errorf("Invalid value for UnionNullString")
-	}
-	return unionStr, nil
-}
-
 func writeAction(r Action, w io.Writer) error {
 	return writeInt(int32(r), w)
+}
+
+func writeArrayBytes(r [][]byte, w io.Writer) error {
+	err := writeLong(int64(len(r)), w)
+	if err != nil || len(r) == 0 {
+		return err
+	}
+	for _, e := range r {
+		err = writeBytes(e, w)
+		if err != nil {
+			return err
+		}
+	}
+	return writeLong(0, w)
 }
 
 func writeArrayLog(r []*Log, w io.Writer) error {
@@ -813,20 +773,6 @@ func writeArrayLog(r []*Log, w io.Writer) error {
 	}
 	for _, e := range r {
 		err = writeLog(e, w)
-		if err != nil {
-			return err
-		}
-	}
-	return writeLong(0, w)
-}
-
-func writeArrayString(r []string, w io.Writer) error {
-	err := writeLong(int64(len(r)), w)
-	if err != nil || len(r) == 0 {
-		return err
-	}
-	for _, e := range r {
-		err = writeString(e, w)
 		if err != nil {
 			return err
 		}
@@ -864,15 +810,15 @@ func writeArrayTransfer(r []*Transfer, w io.Writer) error {
 
 func writeBlock(r *Block, w io.Writer) error {
 	var err error
-	err = writeLong(r.Number, w)
+	err = writeBytes(r.Number, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.Hash, w)
+	err = writeBytes(r.Hash, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.ParentHash, w)
+	err = writeBytes(r.ParentHash, w)
 	if err != nil {
 		return err
 	}
@@ -888,67 +834,67 @@ func writeBlock(r *Block, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.Nonce, w)
+	err = writeBytes(r.Nonce, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.MixDigest, w)
+	err = writeBytes(r.MixDigest, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.Sha3Uncles, w)
+	err = writeBytes(r.Sha3Uncles, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.LogsBloom, w)
+	err = writeBytes(r.LogsBloom, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.StateRoot, w)
+	err = writeBytes(r.StateRoot, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.TransactionsRoot, w)
+	err = writeBytes(r.TransactionsRoot, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.Miner, w)
+	err = writeBytes(r.Miner, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.Difficulty, w)
+	err = writeBytes(r.Difficulty, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.TotalDifficulty, w)
+	err = writeBytes(r.TotalDifficulty, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.ExtraData, w)
+	err = writeBytes(r.ExtraData, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.Size, w)
+	err = writeBytes(r.Size, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.GasLimit, w)
+	err = writeBytes(r.GasLimit, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.GasUsed, w)
+	err = writeBytes(r.GasUsed, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.TxsFees, w)
+	err = writeBytes(r.TxsFees, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.BlockReward, w)
+	err = writeBytes(r.BlockReward, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.UncleReward, w)
+	err = writeBytes(r.UncleReward, w)
 	if err != nil {
 		return err
 	}
@@ -960,7 +906,7 @@ func writeBlock(r *Block, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeArrayString(r.Uncles, w)
+	err = writeArrayBytes(r.Uncles, w)
 	if err != nil {
 		return err
 	}
@@ -981,11 +927,11 @@ func writeBlockStats(r *BlockStats, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.AvgGasPrice, w)
+	err = writeBytes(r.AvgGasPrice, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.AvgTxsFees, w)
+	err = writeBytes(r.AvgTxsFees, w)
 	if err != nil {
 		return err
 	}
@@ -1031,11 +977,11 @@ func writeInt(r int32, w io.Writer) error {
 
 func writeLog(r *Log, w io.Writer) error {
 	var err error
-	err = writeString(r.Address, w)
+	err = writeBytes(r.Address, w)
 	if err != nil {
 		return err
 	}
-	err = writeArrayString(r.Topics, w)
+	err = writeArrayBytes(r.Topics, w)
 	if err != nil {
 		return err
 	}
@@ -1068,31 +1014,31 @@ func writeNull(_ interface{}, _ io.Writer) error {
 
 func writePendingTx(r *PendingTx, w io.Writer) error {
 	var err error
-	err = writeString(r.Hash, w)
+	err = writeBytes(r.Hash, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.Nonce, w)
+	err = writeUnionNullBytes(r.Nonce, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullString(r.NonceHash, w)
+	err = writeUnionNullBytes(r.NonceHash, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullString(r.From, w)
+	err = writeUnionNullBytes(r.From, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.FromBalance, w)
+	err = writeUnionNullBytes(r.FromBalance, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullString(r.To, w)
+	err = writeUnionNullBytes(r.To, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.ToBalance, w)
+	err = writeUnionNullBytes(r.ToBalance, w)
 	if err != nil {
 		return err
 	}
@@ -1100,43 +1046,43 @@ func writePendingTx(r *PendingTx, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullString(r.ContractAddress, w)
+	err = writeUnionNullBytes(r.ContractAddress, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.Value, w)
+	err = writeUnionNullBytes(r.Value, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.Gas, w)
+	err = writeUnionNullBytes(r.Gas, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.GasPrice, w)
+	err = writeUnionNullBytes(r.GasPrice, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.GasUsed, w)
+	err = writeUnionNullBytes(r.GasUsed, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.CumulativeGasUsed, w)
+	err = writeUnionNullBytes(r.CumulativeGasUsed, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullString(r.V, w)
+	err = writeUnionNullBytes(r.V, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullString(r.R, w)
+	err = writeUnionNullBytes(r.R, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullString(r.S, w)
+	err = writeUnionNullBytes(r.S, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.Status, w)
+	err = writeUnionNullBytes(r.Status, w)
 	if err != nil {
 		return err
 	}
@@ -1192,11 +1138,11 @@ func writeTrace(r *Trace, w io.Writer) error {
 }
 func writeTransaction(r *Transaction, w io.Writer) error {
 	var err error
-	err = writeString(r.Hash, w)
+	err = writeBytes(r.Hash, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.Root, w)
+	err = writeBytes(r.Root, w)
 	if err != nil {
 		return err
 	}
@@ -1208,27 +1154,27 @@ func writeTransaction(r *Transaction, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.Nonce, w)
+	err = writeBytes(r.Nonce, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.NonceHash, w)
+	err = writeBytes(r.NonceHash, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.From, w)
+	err = writeBytes(r.From, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.FromBalance, w)
+	err = writeBytes(r.FromBalance, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullString(r.To, w)
+	err = writeUnionNullBytes(r.To, w)
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullLong(r.ToBalance, w)
+	err = writeUnionNullBytes(r.ToBalance, w)
 	if err != nil {
 		return err
 	}
@@ -1236,47 +1182,47 @@ func writeTransaction(r *Transaction, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullString(r.ContractAddress, w)
+	err = writeUnionNullBytes(r.ContractAddress, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.Value, w)
+	err = writeBytes(r.Value, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.Gas, w)
+	err = writeBytes(r.Gas, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.GasPrice, w)
+	err = writeBytes(r.GasPrice, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.GasUsed, w)
+	err = writeBytes(r.GasUsed, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.CumulativeGasUsed, w)
+	err = writeBytes(r.CumulativeGasUsed, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.V, w)
+	err = writeBytes(r.V, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.R, w)
+	err = writeBytes(r.R, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.S, w)
+	err = writeBytes(r.S, w)
 	if err != nil {
 		return err
 	}
-	err = writeLong(r.Status, w)
+	err = writeBytes(r.Status, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.LogsBloom, w)
+	err = writeBytes(r.LogsBloom, w)
 	if err != nil {
 		return err
 	}
@@ -1293,31 +1239,31 @@ func writeTransaction(r *Transaction, w io.Writer) error {
 }
 func writeTransfer(r *Transfer, w io.Writer) error {
 	var err error
-	err = writeString(r.Op, w)
+	err = writeInt(r.Op, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.Value, w)
+	err = writeBytes(r.Value, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.From, w)
+	err = writeBytes(r.From, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.FromBalance, w)
+	err = writeBytes(r.FromBalance, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.To, w)
+	err = writeBytes(r.To, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.ToBalance, w)
+	err = writeBytes(r.ToBalance, w)
 	if err != nil {
 		return err
 	}
-	err = writeString(r.Input, w)
+	err = writeBytes(r.Input, w)
 	if err != nil {
 		return err
 	}
@@ -1353,34 +1299,4 @@ func writeUnionNullBytes(r UnionNullBytes, w io.Writer) error {
 
 	}
 	return fmt.Errorf("Invalid value for UnionNullBytes")
-}
-
-func writeUnionNullLong(r UnionNullLong, w io.Writer) error {
-	err := writeLong(int64(r.UnionType), w)
-	if err != nil {
-		return err
-	}
-	switch r.UnionType {
-	case UnionNullLongTypeEnumNull:
-		return writeNull(r.Null, w)
-	case UnionNullLongTypeEnumLong:
-		return writeLong(r.Long, w)
-
-	}
-	return fmt.Errorf("Invalid value for UnionNullLong")
-}
-
-func writeUnionNullString(r UnionNullString, w io.Writer) error {
-	err := writeLong(int64(r.UnionType), w)
-	if err != nil {
-		return err
-	}
-	switch r.UnionType {
-	case UnionNullStringTypeEnumNull:
-		return writeNull(r.Null, w)
-	case UnionNullStringTypeEnumString:
-		return writeString(r.String, w)
-
-	}
-	return fmt.Errorf("Invalid value for UnionNullString")
 }

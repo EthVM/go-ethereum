@@ -15,8 +15,8 @@ type BlockStats struct {
 	BlockTimeMs      int32
 	NumFailedTxs     int32
 	NumSuccessfulTxs int32
-	AvgGasPrice      int64
-	AvgTxsFees       int64
+	AvgGasPrice      []byte
+	AvgTxsFees       []byte
 }
 
 func DeserializeBlockStats(r io.Reader) (*BlockStats, error) {
@@ -30,7 +30,7 @@ func NewBlockStats() *BlockStats {
 }
 
 func (r *BlockStats) Schema() string {
-	return "{\"fields\":[{\"doc\":\"Time taken to find the block in milliseconds\",\"name\":\"blockTimeMs\",\"type\":\"int\"},{\"doc\":\"Number of failed transactions\",\"name\":\"numFailedTxs\",\"type\":\"int\"},{\"doc\":\"Number of successful transactions\",\"name\":\"numSuccessfulTxs\",\"type\":\"int\"},{\"doc\":\"Average gas price\",\"name\":\"avgGasPrice\",\"type\":\"long\"},{\"doc\":\"Total gas price\",\"name\":\"avgTxsFees\",\"type\":\"long\"}],\"name\":\"BlockStats\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"doc\":\"Time taken to find the block in milliseconds\",\"name\":\"blockTimeMs\",\"type\":\"int\"},{\"doc\":\"Number of failed transactions\",\"name\":\"numFailedTxs\",\"type\":\"int\"},{\"doc\":\"Number of successful transactions\",\"name\":\"numSuccessfulTxs\",\"type\":\"int\"},{\"doc\":\"Average gas price\",\"name\":\"avgGasPrice\",\"type\":\"bytes\"},{\"doc\":\"Total gas price\",\"name\":\"avgTxsFees\",\"type\":\"bytes\"}],\"name\":\"BlockStats\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"}"
 }
 
 func (r *BlockStats) Serialize(w io.Writer) error {

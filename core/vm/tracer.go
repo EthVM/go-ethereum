@@ -426,12 +426,12 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
 		input := memory.Get(offset, size)
 
 		transfer := map[string]interface{}{
-			"op":          op.String(),
-			"value":       value.Uint64(),
-			"from":        from.Hex(),
-			"fromBalance": fromBalance.Uint64(),
-			"to":          to.Hex(),
-			"toBalance":   toBalance.Uint64(),
+			"op":          op,
+			"value":       value.Bytes(),
+			"from":        from.Bytes(),
+			"fromBalance": fromBalance.Bytes(),
+			"to":          to.Bytes(),
+			"toBalance":   toBalance.Bytes(),
 			"input":       input,
 		}
 		itc.transfers = append(itc.transfers, transfer)
@@ -452,11 +452,11 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
 
 		transfer := map[string]interface{}{
 			"op":          op.String(),
-			"value":       value.Uint64(),
-			"from":        from.Hex(),
-			"fromBalance": fromBalance.Uint64(),
-			"to":          to.Hex(),
-			"toBalance":   toBalance.Uint64(),
+			"value":       value.Bytes(),
+			"from":        from.Bytes(),
+			"fromBalance": fromBalance.Bytes(),
+			"to":          to.Bytes(),
+			"toBalance":   toBalance.Bytes(),
 			"input":       input,
 		}
 		itc.transfers = append(itc.transfers, transfer)
@@ -480,11 +480,11 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
 
 		transfer := map[string]interface{}{
 			"op":          op.String(),
-			"value":       value.Uint64(),
-			"from":        from.Hex(),
-			"fromBalance": fromBalance.Uint64(),
-			"to":          to.Hex(),
-			"toBalance":   toBalance.Uint64(),
+			"value":       value.Bytes(),
+			"from":        from.Bytes(),
+			"fromBalance": fromBalance.Bytes(),
+			"to":          to.Bytes(),
+			"toBalance":   toBalance.Bytes(),
 			"input":       input,
 		}
 		itc.transfers = append(itc.transfers, transfer)

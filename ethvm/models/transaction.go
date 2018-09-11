@@ -12,28 +12,28 @@ import (
 )
 
 type Transaction struct {
-	Hash              string
-	Root              string
+	Hash              []byte
+	Root              []byte
 	Index             int32
 	Timestamp         int64
-	Nonce             int64
-	NonceHash         string
-	From              string
-	FromBalance       int64
-	To                UnionNullString
-	ToBalance         UnionNullLong
+	Nonce             []byte
+	NonceHash         []byte
+	From              []byte
+	FromBalance       []byte
+	To                UnionNullBytes
+	ToBalance         UnionNullBytes
 	Input             []byte
-	ContractAddress   UnionNullString
-	Value             int64
-	Gas               int64
-	GasPrice          int64
-	GasUsed           int64
-	CumulativeGasUsed int64
-	V                 string
-	R                 string
-	S                 string
-	Status            int64
-	LogsBloom         string
+	ContractAddress   UnionNullBytes
+	Value             []byte
+	Gas               []byte
+	GasPrice          []byte
+	GasUsed           []byte
+	CumulativeGasUsed []byte
+	V                 []byte
+	R                 []byte
+	S                 []byte
+	Status            []byte
+	LogsBloom         []byte
 	Logs              []*Log
 	Trace             *Trace
 }
@@ -52,7 +52,7 @@ func NewTransaction() *Transaction {
 }
 
 func (r *Transaction) Schema() string {
-	return "{\"fields\":[{\"doc\":\"Hash of the transaction\",\"name\":\"hash\",\"type\":\"string\"},{\"doc\":\"Root of the parent block\",\"name\":\"root\",\"type\":\"string\"},{\"doc\":\"Integer of the transactions index position in the block\",\"name\":\"index\",\"type\":\"int\"},{\"doc\":\"Unix timestamp for when the transaction was collated\",\"name\":\"timestamp\",\"type\":{\"logicalType\":\"timestamp-millis\",\"type\":\"long\"}},{\"doc\":\"Number of transactions sent from a given address\",\"name\":\"nonce\",\"type\":\"long\"},{\"doc\":\"SHA3 of the transaction nonce\",\"name\":\"nonceHash\",\"type\":\"string\"},{\"doc\":\"Address of the sender\",\"name\":\"from\",\"type\":\"string\"},{\"doc\":\"Balance of the sender\",\"name\":\"fromBalance\",\"type\":\"long\"},{\"doc\":\"Address of the recipient (or null when contract creation)\",\"name\":\"to\",\"type\":[\"null\",\"string\"]},{\"doc\":\"Balance of the receiver (or null when contract creation)\",\"name\":\"toBalance\",\"type\":[\"null\",\"long\"]},{\"doc\":\"The data send along with the transaction\",\"name\":\"input\",\"type\":\"bytes\"},{\"doc\":\"If a contract is created, the address of it (or null if is just a regular transaction)\",\"name\":\"contractAddress\",\"type\":[\"null\",\"string\"]},{\"doc\":\"Amount of value transferred in Wei\",\"name\":\"value\",\"type\":\"long\"},{\"doc\":\"Amount of gas provided by the sender\",\"name\":\"gas\",\"type\":\"long\"},{\"doc\":\"Amount of gas price provided by the sender in Wei\",\"name\":\"gasPrice\",\"type\":\"long\"},{\"doc\":\"Amount of gas used consumed by the transaction\",\"name\":\"gasUsed\",\"type\":\"long\"},{\"doc\":\"Cumulative gas used by the transaction\",\"name\":\"cumulativeGasUsed\",\"type\":\"long\"},{\"doc\":\"Transaction signature v\",\"name\":\"v\",\"type\":\"string\"},{\"doc\":\"Transaction signature r\",\"name\":\"r\",\"type\":\"string\"},{\"doc\":\"Transaction signature s\",\"name\":\"s\",\"type\":\"string\"},{\"doc\":\"Transaction result status\",\"name\":\"status\",\"type\":\"long\"},{\"doc\":\"Generated and encoded logs by the transaction\",\"name\":\"logsBloom\",\"type\":\"string\"},{\"doc\":\"Logs produced by executing smart contracts\",\"name\":\"logs\",\"type\":{\"items\":{\"fields\":[{\"desc\":\"Address of the contract that generated the event\",\"name\":\"address\",\"type\":\"string\"},{\"desc\":\"List of topics provided by the contract\",\"name\":\"topics\",\"type\":{\"items\":\"string\",\"type\":\"array\"}},{\"desc\":\"Supplied by the contract, usually ABI-encoded\",\"name\":\"data\",\"type\":\"bytes\"},{\"desc\":\"Index of the log in the receipt\",\"name\":\"index\",\"type\":\"int\"},{\"desc\":\"True if this log was reverted due to a chain reorganisation\",\"name\":\"removed\",\"type\":\"boolean\"}],\"name\":\"Log\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"},\"type\":\"array\"}},{\"doc\":\"Trace that describes contract creation, destruction or intenal transactions\",\"name\":\"trace\",\"type\":{\"fields\":[{\"desc\":\"Signals if an error happened during execution\",\"name\":\"isError\",\"type\":\"boolean\"},{\"desc\":\"Stores the error message\",\"name\":\"msg\",\"type\":\"string\"},{\"desc\":\"An array describing transfers\",\"name\":\"transfers\",\"type\":{\"items\":{\"fields\":[{\"doc\":\"Type of op executed inside the transaction\",\"name\":\"op\",\"type\":\"string\"},{\"doc\":\"Raw value of the transaction\",\"name\":\"value\",\"type\":\"string\"},{\"doc\":\"Address of the sender\",\"name\":\"from\",\"type\":\"string\"},{\"doc\":\"Balance of the sender\",\"name\":\"fromBalance\",\"type\":\"string\"},{\"doc\":\"Address of the receiver\",\"name\":\"to\",\"type\":\"string\"},{\"doc\":\"Balance of the receiver\",\"name\":\"toBalance\",\"type\":\"string\"},{\"doc\":\"Raw input data\",\"name\":\"input\",\"type\":\"string\"}],\"name\":\"Transfer\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"Trace\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"}}],\"name\":\"Transaction\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"doc\":\"Hash of the transaction\",\"name\":\"hash\",\"type\":\"bytes\"},{\"doc\":\"Root of the parent block\",\"name\":\"root\",\"type\":\"bytes\"},{\"doc\":\"Integer of the transactions index position in the block\",\"name\":\"index\",\"type\":\"int\"},{\"doc\":\"Unix timestamp for when the transaction was collated\",\"name\":\"timestamp\",\"type\":{\"logicalType\":\"timestamp-millis\",\"type\":\"long\"}},{\"doc\":\"Number of transactions sent from a given address\",\"name\":\"nonce\",\"type\":\"bytes\"},{\"doc\":\"SHA3 of the transaction nonce\",\"name\":\"nonceHash\",\"type\":\"bytes\"},{\"doc\":\"Address of the sender\",\"name\":\"from\",\"type\":\"bytes\"},{\"doc\":\"Balance of the sender\",\"name\":\"fromBalance\",\"type\":\"bytes\"},{\"doc\":\"Address of the recipient (or null when contract creation)\",\"name\":\"to\",\"type\":[\"null\",\"bytes\"]},{\"doc\":\"Balance of the receiver (or null when contract creation)\",\"name\":\"toBalance\",\"type\":[\"null\",\"bytes\"]},{\"doc\":\"The data send along with the transaction\",\"name\":\"input\",\"type\":\"bytes\"},{\"doc\":\"If a contract is created, the address of it (or null if is just a regular transaction)\",\"name\":\"contractAddress\",\"type\":[\"null\",\"bytes\"]},{\"doc\":\"Amount of value transferred in Wei\",\"name\":\"value\",\"type\":\"bytes\"},{\"doc\":\"Amount of gas provided by the sender\",\"name\":\"gas\",\"type\":\"bytes\"},{\"doc\":\"Amount of gas price provided by the sender in Wei\",\"name\":\"gasPrice\",\"type\":\"bytes\"},{\"doc\":\"Amount of gas used consumed by the transaction\",\"name\":\"gasUsed\",\"type\":\"bytes\"},{\"doc\":\"Cumulative gas used by the transaction\",\"name\":\"cumulativeGasUsed\",\"type\":\"bytes\"},{\"doc\":\"Transaction signature v\",\"name\":\"v\",\"type\":\"bytes\"},{\"doc\":\"Transaction signature r\",\"name\":\"r\",\"type\":\"bytes\"},{\"doc\":\"Transaction signature s\",\"name\":\"s\",\"type\":\"bytes\"},{\"doc\":\"Transaction result status\",\"name\":\"status\",\"type\":\"bytes\"},{\"doc\":\"Generated and encoded logs by the transaction\",\"name\":\"logsBloom\",\"type\":\"bytes\"},{\"doc\":\"Logs produced by executing smart contracts\",\"name\":\"logs\",\"type\":{\"items\":{\"fields\":[{\"desc\":\"Address of the contract that generated the event\",\"name\":\"address\",\"type\":\"bytes\"},{\"desc\":\"List of topics provided by the contract\",\"name\":\"topics\",\"type\":{\"items\":\"bytes\",\"type\":\"array\"}},{\"desc\":\"Supplied by the contract, usually ABI-encoded\",\"name\":\"data\",\"type\":\"bytes\"},{\"desc\":\"Index of the log in the receipt\",\"name\":\"index\",\"type\":\"int\"},{\"desc\":\"True if this log was reverted due to a chain reorganisation\",\"name\":\"removed\",\"type\":\"boolean\"}],\"name\":\"Log\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"},\"type\":\"array\"}},{\"doc\":\"Trace that describes contract creation, destruction or intenal transactions\",\"name\":\"trace\",\"type\":{\"fields\":[{\"desc\":\"Signals if an error happened during execution\",\"name\":\"isError\",\"type\":\"boolean\"},{\"desc\":\"Stores the error message\",\"name\":\"msg\",\"type\":\"string\"},{\"desc\":\"An array describing transfers\",\"name\":\"transfers\",\"type\":{\"items\":{\"fields\":[{\"doc\":\"Type of op executed inside the transaction\",\"name\":\"op\",\"type\":\"int\"},{\"doc\":\"Raw value of the transaction\",\"name\":\"value\",\"type\":\"bytes\"},{\"doc\":\"Address of the sender\",\"name\":\"from\",\"type\":\"bytes\"},{\"doc\":\"Balance of the sender\",\"name\":\"fromBalance\",\"type\":\"bytes\"},{\"doc\":\"Address of the receiver\",\"name\":\"to\",\"type\":\"bytes\"},{\"doc\":\"Balance of the receiver\",\"name\":\"toBalance\",\"type\":\"bytes\"},{\"doc\":\"Raw input data\",\"name\":\"input\",\"type\":\"bytes\"}],\"name\":\"Transfer\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"Trace\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"}}],\"name\":\"Transaction\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"}"
 }
 
 func (r *Transaction) Serialize(w io.Writer) error {
