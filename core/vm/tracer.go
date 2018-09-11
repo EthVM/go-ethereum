@@ -396,7 +396,11 @@ type InternalTxsTracer struct {
 
 // NewInternalTxsTracer instantiates a new InternalTxsTracer instance.
 func NewInternalTxsTracer() (*InternalTxsTracer, error) {
-	return nil, nil
+	return &InternalTxsTracer{
+		error: false,
+		reason: "",
+		transfers: make([]interface{}, 0),
+	}, nil
 }
 
 // CaptureStart implements the TracerCode interface to initialize the tracing operation.

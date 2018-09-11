@@ -517,8 +517,6 @@ func processBlockLogs(receipt *types.Receipt) []*models.Log {
 }
 
 func processBlockTrace(raw map[string]interface{}) *models.Trace {
-	rawTransfers, _ := raw["transfers"].([]map[string]interface{})
-
 	return &models.Trace{
 		IsError: func() bool {
 			return raw["error"].(bool)
@@ -527,6 +525,7 @@ func processBlockTrace(raw map[string]interface{}) *models.Trace {
 			return raw["reason"].(string)
 		}(),
 		Transfers: func() []*models.Transfer {
+			rawTransfers, _ := raw["transfers"].([]map[string]interface{})
 			transfers := make([]*models.Transfer, len(rawTransfers))
 			for _, rawTransfer := range rawTransfers {
 				transfer := &models.Transfer{
