@@ -260,7 +260,7 @@ func readBlock(r io.Reader) (*Block, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.ExtraData, err = readBytes(r)
+	str.ExtraData, err = readString(r)
 	if err != nil {
 		return nil, err
 	}
@@ -643,7 +643,7 @@ func readTransaction(r io.Reader) (*Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.LogsBloom, err = readBytes(r)
+	str.LogsBloom, err = readString(r)
 	if err != nil {
 		return nil, err
 	}
@@ -924,7 +924,7 @@ func writeBlock(r *Block, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeBytes(r.ExtraData, w)
+	err = writeString(r.ExtraData, w)
 	if err != nil {
 		return err
 	}
@@ -1276,7 +1276,7 @@ func writeTransaction(r *Transaction, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeBytes(r.LogsBloom, w)
+	err = writeString(r.LogsBloom, w)
 	if err != nil {
 		return err
 	}
