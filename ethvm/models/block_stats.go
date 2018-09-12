@@ -30,7 +30,7 @@ func NewBlockStats() *BlockStats {
 }
 
 func (r *BlockStats) Schema() string {
-	return "{\"fields\":[{\"doc\":\"Time taken to find the block in milliseconds\",\"name\":\"blockTimeMs\",\"type\":\"int\"},{\"doc\":\"Number of failed transactions\",\"name\":\"numFailedTxs\",\"type\":\"int\"},{\"doc\":\"Number of successful transactions\",\"name\":\"numSuccessfulTxs\",\"type\":\"int\"},{\"doc\":\"Average gas price\",\"name\":\"avgGasPrice\",\"type\":\"bytes\"},{\"doc\":\"Total gas price\",\"name\":\"avgTxsFees\",\"type\":\"bytes\"}],\"name\":\"BlockStats\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"doc\":\"Time taken to find the block in milliseconds\",\"name\":\"blockTimeMs\",\"type\":\"int\"},{\"doc\":\"Number of failed transactions\",\"name\":\"numFailedTxs\",\"type\":\"int\"},{\"doc\":\"Number of successful transactions\",\"name\":\"numSuccessfulTxs\",\"type\":\"int\"},{\"doc\":\"Average gas price\",\"name\":\"avgGasPrice\",\"type\":\"bytes\"},{\"doc\":\"Total gas price\",\"name\":\"avgTxsFees\",\"type\":\"bytes\"}],\"name\":\"BlockStats\",\"namespace\":\"io.enkrypt.bolt.models.avro\",\"type\":\"record\"}"
 }
 
 func (r *BlockStats) Serialize(w io.Writer) error {

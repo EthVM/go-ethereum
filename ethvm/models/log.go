@@ -32,7 +32,7 @@ func NewLog() *Log {
 }
 
 func (r *Log) Schema() string {
-	return "{\"fields\":[{\"desc\":\"Address of the contract that generated the event\",\"name\":\"address\",\"type\":\"bytes\"},{\"desc\":\"List of topics provided by the contract\",\"name\":\"topics\",\"type\":{\"items\":\"bytes\",\"type\":\"array\"}},{\"desc\":\"Supplied by the contract, usually ABI-encoded\",\"name\":\"data\",\"type\":\"bytes\"},{\"desc\":\"Index of the log in the receipt\",\"name\":\"index\",\"type\":\"int\"},{\"desc\":\"True if this log was reverted due to a chain reorganisation\",\"name\":\"removed\",\"type\":\"boolean\"}],\"name\":\"Log\",\"namespace\":\"io.enkrypt.bolt.models\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"desc\":\"Address of the contract that generated the event\",\"name\":\"address\",\"type\":\"bytes\"},{\"desc\":\"List of topics provided by the contract\",\"name\":\"topics\",\"type\":{\"items\":\"bytes\",\"type\":\"array\"}},{\"desc\":\"Supplied by the contract, usually ABI-encoded\",\"name\":\"data\",\"type\":\"bytes\"},{\"desc\":\"Index of the log in the receipt\",\"name\":\"index\",\"type\":\"int\"},{\"desc\":\"True if this log was reverted due to a chain reorganisation\",\"name\":\"removed\",\"type\":\"boolean\"}],\"name\":\"Log\",\"namespace\":\"io.enkrypt.bolt.models.avro\",\"type\":\"record\"}"
 }
 
 func (r *Log) Serialize(w io.Writer) error {
