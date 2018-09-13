@@ -622,7 +622,7 @@ func processBlockTxs(state *state.StateDB, in *BlockIn) []*models.Transaction {
       R:                 _r.Bytes(),
       V:                 _v.Bytes(),
       S:                 _s.Bytes(),
-      Status:            uintToBytes(receipt.Status),
+      Status:            int32(receipt.Status),
       Logs:              processBlockLogs(receipt),
       Trace:             processBlockTrace(blockTx.Trace),
     }
@@ -741,9 +741,9 @@ func processPendingTx(state *state.StateDB, raw *PendingTxIn) models.PendingTx {
       Bytes:     _s.Bytes(),
       UnionType: models.UnionNullBytesTypeEnumBytes,
     },
-    Status: models.UnionNullBytes{
-      Bytes:     uintToBytes(raw.Receipt.Status),
-      UnionType: models.UnionNullBytesTypeEnumBytes,
+    Status: models.UnionNullInt{
+      Int:       int32(raw.Receipt.Status),
+      UnionType: models.UnionNullIntTypeEnumInt,
     },
     Logs:     processBlockLogs(raw.Receipt),
     Trace:    processBlockTrace(raw.Trace),
@@ -811,8 +811,8 @@ func processSimplePendingTxs(raw *PendingTxIn) models.PendingTx {
     S: models.UnionNullBytes{
       UnionType: models.UnionNullBytesTypeEnumNull,
     },
-    Status: models.UnionNullBytes{
-      UnionType: models.UnionNullBytesTypeEnumBytes,
+    Status: models.UnionNullInt{
+      UnionType: models.UnionNullIntTypeEnumNull,
     },
     Logs: make([]*models.Log, 0),
     Trace: &models.Trace{

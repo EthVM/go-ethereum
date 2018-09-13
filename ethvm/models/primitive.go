@@ -493,7 +493,7 @@ func readPendingTx(r io.Reader) (*PendingTx, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.Status, err = readUnionNullBytes(r)
+	str.Status, err = readUnionNullInt(r)
 	if err != nil {
 		return nil, err
 	}
@@ -639,7 +639,7 @@ func readTransaction(r io.Reader) (*Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.Status, err = readBytes(r)
+	str.Status, err = readInt(r)
 	if err != nil {
 		return nil, err
 	}
@@ -744,6 +744,33 @@ func readUnionNullBytes(r io.Reader) (UnionNullBytes, error) {
 
 	default:
 		return unionStr, fmt.Errorf("Invalid value for UnionNullBytes")
+	}
+	return unionStr, nil
+}
+
+func readUnionNullInt(r io.Reader) (UnionNullInt, error) {
+	field, err := readLong(r)
+	var unionStr UnionNullInt
+	if err != nil {
+		return unionStr, err
+	}
+	unionStr.UnionType = UnionNullIntTypeEnum(field)
+	switch unionStr.UnionType {
+	case UnionNullIntTypeEnumNull:
+		val, err := readNull(r)
+		if err != nil {
+			return unionStr, err
+		}
+		unionStr.Null = val
+	case UnionNullIntTypeEnumInt:
+		val, err := readInt(r)
+		if err != nil {
+			return unionStr, err
+		}
+		unionStr.Int = val
+
+	default:
+		return unionStr, fmt.Errorf("Invalid value for UnionNullInt")
 	}
 	return unionStr, nil
 }
@@ -1082,7 +1109,7 @@ func writePendingTx(r *PendingTx, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullBytes(r.Status, w)
+	err = writeUnionNullInt(r.Status, w)
 	if err != nil {
 		return err
 	}
@@ -1218,7 +1245,7 @@ func writeTransaction(r *Transaction, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeBytes(r.Status, w)
+	err = writeInt(r.Status, w)
 	if err != nil {
 		return err
 	}
@@ -1299,4 +1326,19 @@ func writeUnionNullBytes(r UnionNullBytes, w io.Writer) error {
 
 	}
 	return fmt.Errorf("Invalid value for UnionNullBytes")
+}
+
+func writeUnionNullInt(r UnionNullInt, w io.Writer) error {
+	err := writeLong(int64(r.UnionType), w)
+	if err != nil {
+		return err
+	}
+	switch r.UnionType {
+	case UnionNullIntTypeEnumNull:
+		return writeNull(r.Null, w)
+	case UnionNullIntTypeEnumInt:
+		return writeInt(r.Int, w)
+
+	}
+	return fmt.Errorf("Invalid value for UnionNullInt")
 }
