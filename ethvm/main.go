@@ -878,6 +878,6 @@ func fatalf(format string, args ...interface{}) {
 
 func uintToBytes(raw uint64) []byte {
   b := make([]byte, 8)
-  binary.LittleEndian.PutUint64(b, raw)
+  binary.BigEndian.PutUint64(b, raw)
   return b
 }
