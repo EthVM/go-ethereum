@@ -471,9 +471,9 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
 	case SELFDESTRUCT: // Halt execution and register account for later deletion
 		data := stack.Data()
 
-		value := data[len(data)-3]
 		from := contract.Address()
-		fromBalance := env.StateDB.GetBalance(from)
+    value := env.StateDB.GetBalance(from)
+    fromBalance := env.StateDB.GetBalance(from)
 		to := common.BytesToAddress(data[len(data)-1].Bytes())
 		toBalance := env.StateDB.GetBalance(common.BytesToAddress(data[len(data)-1].Bytes()))
 		input := make([]byte, 0)
