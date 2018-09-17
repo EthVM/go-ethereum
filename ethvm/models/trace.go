@@ -12,8 +12,7 @@ import (
 )
 
 type Trace struct {
-	IsError   bool
-	Msg       string
+	Error     int32
 	Transfers []*Transfer
 }
 
@@ -30,7 +29,7 @@ func NewTrace() *Trace {
 }
 
 func (r *Trace) Schema() string {
-	return "{\"fields\":[{\"desc\":\"Signals if an error happened during execution\",\"name\":\"isError\",\"type\":\"boolean\"},{\"desc\":\"Stores the error message\",\"name\":\"msg\",\"type\":\"string\"},{\"desc\":\"An array describing transfers\",\"name\":\"transfers\",\"type\":{\"items\":{\"fields\":[{\"doc\":\"Type of op executed inside the transaction\",\"name\":\"op\",\"type\":\"int\"},{\"doc\":\"Raw value of the transaction\",\"name\":\"value\",\"type\":\"bytes\"},{\"doc\":\"Address of the sender\",\"name\":\"from\",\"type\":\"bytes\"},{\"doc\":\"Balance of the sender\",\"name\":\"fromBalance\",\"type\":\"bytes\"},{\"doc\":\"Address of the receiver\",\"name\":\"to\",\"type\":\"bytes\"},{\"doc\":\"Balance of the receiver\",\"name\":\"toBalance\",\"type\":\"bytes\"},{\"doc\":\"Raw input data\",\"name\":\"input\",\"type\":\"bytes\"}],\"name\":\"Transfer\",\"namespace\":\"io.enkrypt.bolt.models.avro\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"Trace\",\"namespace\":\"io.enkrypt.bolt.models.avro\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"desc\":\"Returns an error code if the transaction has failed, otherwise will return 0\",\"name\":\"error\",\"type\":\"int\"},{\"desc\":\"An array describing transfers\",\"name\":\"transfers\",\"type\":{\"items\":{\"fields\":[{\"doc\":\"Type of op executed inside the transaction\",\"name\":\"op\",\"type\":\"int\"},{\"doc\":\"Raw value of the transaction\",\"name\":\"value\",\"type\":\"bytes\"},{\"doc\":\"Address of the sender\",\"name\":\"from\",\"type\":\"bytes\"},{\"doc\":\"Balance of the sender\",\"name\":\"fromBalance\",\"type\":\"bytes\"},{\"doc\":\"Address of the receiver\",\"name\":\"to\",\"type\":\"bytes\"},{\"doc\":\"Balance of the receiver\",\"name\":\"toBalance\",\"type\":\"bytes\"},{\"doc\":\"Raw input data\",\"name\":\"input\",\"type\":\"bytes\"}],\"name\":\"Transfer\",\"namespace\":\"io.enkrypt.bolt.models.avro\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"Trace\",\"namespace\":\"io.enkrypt.bolt.models.avro\",\"type\":\"record\"}"
 }
 
 func (r *Trace) Serialize(w io.Writer) error {

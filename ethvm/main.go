@@ -48,6 +48,12 @@ const (
   NoopTracer
 )
 
+const (
+  TraceOk = iota
+  TraceOutOfGasError
+  TraceUnknownError
+)
+
 var (
   // EthVMFlag Enables ETHVM to listen on Ethereum data
   EthVMEnabledFlag = cli.BoolFlag{
@@ -518,11 +524,8 @@ func processBlockLogs(receipt *types.Receipt) []*models.Log {
 
 func processBlockTrace(raw map[string]interface{}) *models.Trace {
   return &models.Trace{
-    IsError: func() bool {
-      return raw["error"].(bool)
-    }(),
-    Msg: func() string {
-      return raw["reason"].(string)
+    Error: func() int32 {
+      return int32(raw["error"].(int))
     }(),
     Transfers: func() []*models.Transfer {
       rawTransfers, _ := raw["transfers"].([]map[string]interface{})
@@ -816,8 +819,7 @@ func processSimplePendingTxs(raw *PendingTxIn) models.PendingTx {
     },
     Logs: make([]*models.Log, 0),
     Trace: &models.Trace{
-      IsError:   false,
-      Msg:       "",
+      Error:     TraceOk,
       Transfers: make([]*models.Transfer, 0),
     },
   }

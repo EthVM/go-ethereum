@@ -17,16 +17,18 @@
 package vm
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"math/big"
-	"time"
+  "encoding/json"
+  "errors"
+  "fmt"
+  "github.com/ethereum/go-ethereum/ethvm"
+  "github.com/ethereum/go-ethereum/log"
+  "math/big"
+  "time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/robertkrimen/otto"
+  "github.com/ethereum/go-ethereum/common"
+  "github.com/ethereum/go-ethereum/common/hexutil"
+  "github.com/ethereum/go-ethereum/crypto"
+  "github.com/robertkrimen/otto"
 )
 
 // fakeBig is used to provide an interface to Javascript for 'big.NewInt'
@@ -34,492 +36,496 @@ type fakeBig struct{}
 
 // NewInt creates a new big.Int with the specified int64 value.
 func (fb *fakeBig) NewInt(x int64) *big.Int {
-	return big.NewInt(x)
+  return big.NewInt(x)
 }
 func (fb *fakeBig) ToInt(x *big.Int) int64 {
-	return x.Int64()
+  return x.Int64()
 }
 func (fb *fakeBig) BigToAddress(b *big.Int) common.Address {
-	return common.BytesToAddress(b.Bytes())
+  return common.BytesToAddress(b.Bytes())
 }
 func (fb *fakeBig) CreateContractAddress(addr string, nonce uint64) common.Address {
-	return crypto.CreateAddress(common.HexToAddress(addr), nonce)
+  return crypto.CreateAddress(common.HexToAddress(addr), nonce)
 }
 
 // OpCodeWrapper provides a JavaScript-friendly wrapper around OpCode, to convince Otto to treat it
 // as an object, instead of a number.
 type opCodeWrapper struct {
-	op OpCode
+  op OpCode
 }
 
 // toNumber returns the ID of this opcode as an integer
 func (ocw *opCodeWrapper) toNumber() int {
-	return int(ocw.op)
+  return int(ocw.op)
 }
 
 // toString returns the string representation of the opcode
 func (ocw *opCodeWrapper) toString() string {
-	return ocw.op.String()
+  return ocw.op.String()
 }
 
 // isPush returns true if the op is a Push
 func (ocw *opCodeWrapper) isPush() bool {
-	return ocw.op.IsPush()
+  return ocw.op.IsPush()
 }
 
 // MarshalJSON serializes the opcode as JSON
 func (ocw *opCodeWrapper) MarshalJSON() ([]byte, error) {
-	return json.Marshal(ocw.op.String())
+  return json.Marshal(ocw.op.String())
 }
 
 // toValue returns an otto.Value for the opCodeWrapper
 func (ocw *opCodeWrapper) toValue(vm *otto.Otto) otto.Value {
-	value, _ := vm.ToValue(ocw)
-	obj := value.Object()
-	obj.Set("toNumber", ocw.toNumber)
-	obj.Set("toString", ocw.toString)
-	obj.Set("isPush", ocw.isPush)
-	return value
+  value, _ := vm.ToValue(ocw)
+  obj := value.Object()
+  obj.Set("toNumber", ocw.toNumber)
+  obj.Set("toString", ocw.toString)
+  obj.Set("isPush", ocw.isPush)
+  return value
 }
 
 // memoryWrapper provides a JS wrapper around vm.Memory
 type memoryWrapper struct {
-	memory *Memory
+  memory *Memory
 }
 
 // slice returns the requested range of memory as a byte slice
 func (mw *memoryWrapper) slice(begin, end int64) []byte {
-	return mw.memory.Get(begin, end-begin)
+  return mw.memory.Get(begin, end-begin)
 }
 
 // getUint returns the 32 bytes at the specified address interpreted
 // as an unsigned integer
 func (mw *memoryWrapper) getUint(addr int64) *big.Int {
-	ret := big.NewInt(0)
-	ret.SetBytes(mw.memory.GetPtr(addr, 32))
-	return ret
+  ret := big.NewInt(0)
+  ret.SetBytes(mw.memory.GetPtr(addr, 32))
+  return ret
 }
 
 // toValue returns an otto.Value for the memoryWrapper
 func (mw *memoryWrapper) toValue(vm *otto.Otto) otto.Value {
-	value, _ := vm.ToValue(mw)
-	obj := value.Object()
-	obj.Set("slice", mw.slice)
-	obj.Set("getUint", mw.getUint)
-	return value
+  value, _ := vm.ToValue(mw)
+  obj := value.Object()
+  obj.Set("slice", mw.slice)
+  obj.Set("getUint", mw.getUint)
+  return value
 }
 
 // stackWrapper provides a JS wrapper around vm.Stack
 type stackWrapper struct {
-	stack *Stack
+  stack *Stack
 }
 
 // peek returns the nth-from-the-top element of the stack.
 func (sw *stackWrapper) peek(idx int) *big.Int {
-	return sw.stack.Data()[len(sw.stack.Data())-idx-1]
+  return sw.stack.Data()[len(sw.stack.Data())-idx-1]
 }
 
 // length returns the length of the stack
 func (sw *stackWrapper) length() int {
-	return len(sw.stack.Data())
+  return len(sw.stack.Data())
 }
 
 // toValue returns an otto.Value for the stackWrapper
 func (sw *stackWrapper) toValue(vm *otto.Otto) otto.Value {
-	value, _ := vm.ToValue(sw)
-	obj := value.Object()
-	obj.Set("peek", sw.peek)
-	obj.Set("length", sw.length)
-	return value
+  value, _ := vm.ToValue(sw)
+  obj := value.Object()
+  obj.Set("peek", sw.peek)
+  obj.Set("length", sw.length)
+  return value
 }
 
 // dbWrapper provides a JS wrapper around vm.Database
 type dbWrapper struct {
-	db StateDB
+  db StateDB
 }
 
 // getBalance retrieves an account's balance
 func (dw *dbWrapper) getBalance(addr []byte) *big.Int {
-	return dw.db.GetBalance(common.BytesToAddress(addr))
+  return dw.db.GetBalance(common.BytesToAddress(addr))
 }
 
 // getNonce retrieves an account's nonce
 func (dw *dbWrapper) getNonce(addr []byte) uint64 {
-	return dw.db.GetNonce(common.BytesToAddress(addr))
+  return dw.db.GetNonce(common.BytesToAddress(addr))
 }
 
 // getCode retrieves an account's code
 func (dw *dbWrapper) getCode(addr []byte) []byte {
-	return dw.db.GetCode(common.BytesToAddress(addr))
+  return dw.db.GetCode(common.BytesToAddress(addr))
 }
 
 // getState retrieves an account's state data for the given hash
 func (dw *dbWrapper) getState(addr []byte, hash common.Hash) common.Hash {
-	return dw.db.GetState(common.BytesToAddress(addr), hash)
+  return dw.db.GetState(common.BytesToAddress(addr), hash)
 }
 
 // exists returns true iff the account exists
 func (dw *dbWrapper) exists(addr []byte) bool {
-	return dw.db.Exist(common.BytesToAddress(addr))
+  return dw.db.Exist(common.BytesToAddress(addr))
 }
 
 // toValue returns an otto.Value for the dbWrapper
 func (dw *dbWrapper) toValue(vm *otto.Otto) otto.Value {
-	value, _ := vm.ToValue(dw)
-	obj := value.Object()
-	obj.Set("getBalance", dw.getBalance)
-	obj.Set("getNonce", dw.getNonce)
-	obj.Set("getCode", dw.getCode)
-	obj.Set("getState", dw.getState)
-	obj.Set("exists", dw.exists)
-	return value
+  value, _ := vm.ToValue(dw)
+  obj := value.Object()
+  obj.Set("getBalance", dw.getBalance)
+  obj.Set("getNonce", dw.getNonce)
+  obj.Set("getCode", dw.getCode)
+  obj.Set("getState", dw.getState)
+  obj.Set("exists", dw.exists)
+  return value
 }
 
 // contractWrapper provides a JS wrapper around vm.Contract
 type contractWrapper struct {
-	contract *Contract
+  contract *Contract
 }
 
 func (c *contractWrapper) caller() common.Address {
-	return c.contract.Caller()
+  return c.contract.Caller()
 }
 
 func (c *contractWrapper) address() common.Address {
-	return c.contract.Address()
+  return c.contract.Address()
 }
 
 func (c *contractWrapper) value() *big.Int {
-	return c.contract.Value()
+  return c.contract.Value()
 }
 
 func (c *contractWrapper) calldata() []byte {
-	return c.contract.Input
+  return c.contract.Input
 }
 
 func (c *contractWrapper) toValue(vm *otto.Otto) otto.Value {
-	value, _ := vm.ToValue(c)
-	obj := value.Object()
-	obj.Set("caller", c.caller)
-	obj.Set("address", c.address)
-	obj.Set("value", c.value)
-	obj.Set("calldata", c.calldata)
-	return value
+  value, _ := vm.ToValue(c)
+  obj := value.Object()
+  obj.Set("caller", c.caller)
+  obj.Set("address", c.address)
+  obj.Set("value", c.value)
+  obj.Set("calldata", c.calldata)
+  return value
 }
 
 // JavascriptTracer provides an implementation of TracerCode that evaluates a
 // Javascript function for each VM execution step.
 type JavascriptTracer struct {
-	vm       *otto.Otto             // Javascript VM instance
-	traceobj *otto.Object           // User-supplied object to call
-	op       *opCodeWrapper         // Wrapper around the VM opcode
-	log      map[string]interface{} // (Reusable) map for the `log` arg to `step`
-	logvalue otto.Value             // JS view of `log`
-	memory   *memoryWrapper         // Wrapper around the VM memory
-	stack    *stackWrapper          // Wrapper around the VM stack
-	db       *dbWrapper             // Wrapper around the VM environment
-	dbvalue  otto.Value             // JS view of `db`
-	contract *contractWrapper       // Wrapper around the contract object
-	err      error                  // Error, if one has occurred
-	result   interface{}            // Final result to return to the user
+  vm       *otto.Otto             // Javascript VM instance
+  traceobj *otto.Object           // User-supplied object to call
+  op       *opCodeWrapper         // Wrapper around the VM opcode
+  log      map[string]interface{} // (Reusable) map for the `log` arg to `step`
+  logvalue otto.Value             // JS view of `log`
+  memory   *memoryWrapper         // Wrapper around the VM memory
+  stack    *stackWrapper          // Wrapper around the VM stack
+  db       *dbWrapper             // Wrapper around the VM environment
+  dbvalue  otto.Value             // JS view of `db`
+  contract *contractWrapper       // Wrapper around the contract object
+  err      error                  // Error, if one has occurred
+  result   interface{}            // Final result to return to the user
 }
 
 // NewJavascriptTracer instantiates a new JavascriptTracer instance.
 // code specifies a Javascript snippet, which must evaluate to an expression
 // returning an object with 'step' and 'result' functions.
 func NewJavascriptTracer(code string) (*JavascriptTracer, error) {
-	vm := otto.New()
-	vm.Interrupt = make(chan func(), 1)
+  vm := otto.New()
+  vm.Interrupt = make(chan func(), 1)
 
-	// Set up builtins for this environment
-	vm.Set("big", &fakeBig{})
-	vm.Set("toHex", hexutil.Encode)
+  // Set up builtins for this environment
+  vm.Set("big", &fakeBig{})
+  vm.Set("toHex", hexutil.Encode)
 
-	jstracer, err := vm.Object("(" + code + ")")
-	if err != nil {
-		return nil, err
-	}
-	// Check the required functions exist
-	step, err := jstracer.Get("step")
-	if err != nil {
-		return nil, err
-	}
-	if !step.IsFunction() {
-		return nil, fmt.Errorf("Trace object must expose a function step()")
-	}
+  jstracer, err := vm.Object("(" + code + ")")
+  if err != nil {
+    return nil, err
+  }
+  // Check the required functions exist
+  step, err := jstracer.Get("step")
+  if err != nil {
+    return nil, err
+  }
+  if !step.IsFunction() {
+    return nil, fmt.Errorf("Trace object must expose a function step()")
+  }
 
-	result, err := jstracer.Get("result")
-	if err != nil {
-		return nil, err
-	}
-	if !result.IsFunction() {
-		return nil, fmt.Errorf("Trace object must expose a function result()")
-	}
-	// Create the persistent log object
-	var (
-		op       = new(opCodeWrapper)
-		mem      = new(memoryWrapper)
-		stack    = new(stackWrapper)
-		db       = new(dbWrapper)
-		contract = new(contractWrapper)
-	)
-	log := map[string]interface{}{
-		"op":       op.toValue(vm),
-		"memory":   mem.toValue(vm),
-		"stack":    stack.toValue(vm),
-		"contract": contract.toValue(vm),
-	}
-	logvalue, _ := vm.ToValue(log)
+  result, err := jstracer.Get("result")
+  if err != nil {
+    return nil, err
+  }
+  if !result.IsFunction() {
+    return nil, fmt.Errorf("Trace object must expose a function result()")
+  }
+  // Create the persistent log object
+  var (
+    op       = new(opCodeWrapper)
+    mem      = new(memoryWrapper)
+    stack    = new(stackWrapper)
+    db       = new(dbWrapper)
+    contract = new(contractWrapper)
+  )
+  log := map[string]interface{}{
+    "op":       op.toValue(vm),
+    "memory":   mem.toValue(vm),
+    "stack":    stack.toValue(vm),
+    "contract": contract.toValue(vm),
+  }
+  logvalue, _ := vm.ToValue(log)
 
-	return &JavascriptTracer{
-		vm:       vm,
-		traceobj: jstracer,
-		op:       op,
-		log:      log,
-		logvalue: logvalue,
-		memory:   mem,
-		stack:    stack,
-		db:       db,
-		dbvalue:  db.toValue(vm),
-		contract: contract,
-		err:      nil,
-	}, nil
+  return &JavascriptTracer{
+    vm:       vm,
+    traceobj: jstracer,
+    op:       op,
+    log:      log,
+    logvalue: logvalue,
+    memory:   mem,
+    stack:    stack,
+    db:       db,
+    dbvalue:  db.toValue(vm),
+    contract: contract,
+    err:      nil,
+  }, nil
 }
 
 // Stop terminates execution of any JavaScript
 func (jst *JavascriptTracer) Stop(err error) {
-	jst.vm.Interrupt <- func() {
-		panic(err)
-	}
+  jst.vm.Interrupt <- func() {
+    panic(err)
+  }
 }
 
 // callSafely executes a method on a JS object, catching any panics and
 // returning them as error objects.
 func (jst *JavascriptTracer) callSafely(method string, argumentList ...interface{}) (ret interface{}, err error) {
-	defer func() {
-		if caught := recover(); caught != nil {
-			switch caught := caught.(type) {
-			case error:
-				err = caught
-			case string:
-				err = errors.New(caught)
-			case fmt.Stringer:
-				err = errors.New(caught.String())
-			default:
-				panic(caught)
-			}
-		}
-	}()
+  defer func() {
+    if caught := recover(); caught != nil {
+      switch caught := caught.(type) {
+      case error:
+        err = caught
+      case string:
+        err = errors.New(caught)
+      case fmt.Stringer:
+        err = errors.New(caught.String())
+      default:
+        panic(caught)
+      }
+    }
+  }()
 
-	value, err := jst.traceobj.Call(method, argumentList...)
-	ret, _ = value.Export()
-	return ret, err
+  value, err := jst.traceobj.Call(method, argumentList...)
+  ret, _ = value.Export()
+  return ret, err
 }
 
 func wrapError(context string, err error) error {
-	var message string
-	switch err := err.(type) {
-	case *otto.Error:
-		message = err.String()
-	default:
-		message = err.Error()
-	}
-	return fmt.Errorf("%v    in server-side tracer function '%v'", message, context)
+  var message string
+  switch err := err.(type) {
+  case *otto.Error:
+    message = err.String()
+  default:
+    message = err.Error()
+  }
+  return fmt.Errorf("%v    in server-side tracer function '%v'", message, context)
 }
 
 // CaptureStart implements the TracerCode interface to initialize the tracing operation.
 func (jst *JavascriptTracer) CaptureStart(from common.Address, to common.Address, create bool, input []byte, gas uint64, value *big.Int) error {
-	return nil
+  return nil
 }
 
 // CaptureFault implements the TracerCode interface to trace an execution fault
 // while running an opcode.
 func (jst *JavascriptTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
-	return nil
+  return nil
 }
 
 // CaptureState implements the TracerCode interface to trace a single step of VM execution
 func (jst *JavascriptTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
-	if jst.err == nil {
-		jst.op.op = op
-		jst.memory.memory = memory
-		jst.stack.stack = stack
-		jst.db.db = env.StateDB
-		jst.contract.contract = contract
+  if jst.err == nil {
+    jst.op.op = op
+    jst.memory.memory = memory
+    jst.stack.stack = stack
+    jst.db.db = env.StateDB
+    jst.contract.contract = contract
 
-		jst.log["pc"] = pc
-		jst.log["gas"] = gas
-		jst.log["cost"] = cost
-		jst.log["depth"] = depth
-		jst.log["account"] = contract.Address()
+    jst.log["pc"] = pc
+    jst.log["gas"] = gas
+    jst.log["cost"] = cost
+    jst.log["depth"] = depth
+    jst.log["account"] = contract.Address()
 
-		delete(jst.log, "error")
-		if err != nil {
-			jst.log["error"] = err
-		}
-		_, err := jst.callSafely("step", jst.logvalue, jst.dbvalue)
-		if err != nil {
-			jst.err = wrapError("step", err)
-		}
-	}
-	return nil
+    delete(jst.log, "error")
+    if err != nil {
+      jst.log["error"] = err
+    }
+    _, err := jst.callSafely("step", jst.logvalue, jst.dbvalue)
+    if err != nil {
+      jst.err = wrapError("step", err)
+    }
+  }
+  return nil
 }
 
 // CaptureEnd is called after the call finishes
 func (jst *JavascriptTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
-	//TODO! @Arachnid please figure out of there's anything we can use this method for
-	return nil
+  //TODO! @Arachnid please figure out of there's anything we can use this method for
+  return nil
 }
 
 // GetResult calls the Javascript 'result' function and returns its value, or any accumulated error
 func (jst *JavascriptTracer) GetResult() (result interface{}, err error) {
-	if jst.err != nil {
-		return nil, jst.err
-	}
+  if jst.err != nil {
+    return nil, jst.err
+  }
 
-	result, err = jst.callSafely("result")
-	if err != nil {
-		err = wrapError("result", err)
-	}
-	return
+  result, err = jst.callSafely("result")
+  if err != nil {
+    err = wrapError("result", err)
+  }
+  return
 }
 
 func (jst *JavascriptTracer) GetTracerResult() (map[string]interface{}, error) {
-	return nil, nil
+  return nil, nil
 }
 
 // InternalTxsTracer provides an implementation that logs each internal txs produced by smart contracts.
 type InternalTxsTracer struct {
-	error     bool
-	reason    string
-	transfers []interface{}
+  error     int
+  transfers []map[string]interface{}
 }
 
 // NewInternalTxsTracer instantiates a new InternalTxsTracer instance.
 func NewInternalTxsTracer() (*InternalTxsTracer, error) {
-	return &InternalTxsTracer{
-		error: false,
-		reason: "",
-		transfers: make([]interface{}, 0),
-	}, nil
+  return &InternalTxsTracer{
+    error: ethvm.TraceOk,
+  }, nil
 }
 
 // CaptureStart implements the TracerCode interface to initialize the tracing operation.
 func (itc *InternalTxsTracer) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
-	return nil
+  return nil
 }
 
 // CaptureState implements the TracerCode interface to trace a single step of VM execution
 func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
-	switch op {
-	case CREATE: // Creates a new account with associated code
-		data := stack.Data()
+  switch op {
+  case CREATE: // Creates a new account with associated code
+    log.Info("Internal-Txs-Tracer - OpCode: CREATE")
 
-		from := contract.Address()
-		fromBalance := env.StateDB.GetBalance(from)
-		nonce := env.StateDB.GetNonce(from)
-		to := crypto.CreateAddress(from, nonce)
-		toBalance := env.StateDB.GetBalance(to)
-		value := data[len(data)-1]
+    data := stack.Data()
 
-		offset := data[len(data)-2].Int64()
-		size := offset + data[len(data)-3].Int64()
-		input := memory.Get(offset, size)
+    from := contract.Address()
+    fromBalance := env.StateDB.GetBalance(from)
+    nonce := env.StateDB.GetNonce(from)
+    to := crypto.CreateAddress(from, nonce)
+    toBalance := env.StateDB.GetBalance(to)
+    value := data[len(data)-1]
 
-		transfer := map[string]interface{}{
-			"op":          op,
-			"value":       value.Bytes(),
-			"from":        from.Bytes(),
-			"fromBalance": fromBalance.Bytes(),
-			"to":          to.Bytes(),
-			"toBalance":   toBalance.Bytes(),
-			"input":       input,
-		}
-		itc.transfers = append(itc.transfers, transfer)
-		break
+    offset := data[len(data)-2].Int64()
+    size := offset + data[len(data)-3].Int64()
+    input := memory.Get(offset, size)
 
-	case CALL: // Message-call into an account
-		data := stack.Data()
+    transfer := map[string]interface{}{
+      "op":          op,
+      "value":       value.Bytes(),
+      "from":        from.Bytes(),
+      "fromBalance": fromBalance.Bytes(),
+      "to":          to.Bytes(),
+      "toBalance":   toBalance.Bytes(),
+      "input":       input,
+    }
+    itc.transfers = append(itc.transfers, transfer)
+    break
 
-		value := data[len(data)-3]
-		from := contract.Address()
-		fromBalance := env.StateDB.GetBalance(from)
-		to := common.BytesToAddress(data[len(data)-2].Bytes())
-		toBalance := env.StateDB.GetBalance(common.BytesToAddress(data[len(data)-2].Bytes()))
+  case CALL: // Message-call into an account
+    log.Info("Internal-Txs-Tracer - OpCode: CALL")
 
-		offset := data[3].Int64()
-		size := offset + data[4].Int64()
-		input := memory.Get(offset, size)
+    data := stack.Data()
 
-		transfer := map[string]interface{}{
-			"op":          op.String(),
-			"value":       value.Bytes(),
-			"from":        from.Bytes(),
-			"fromBalance": fromBalance.Bytes(),
-			"to":          to.Bytes(),
-			"toBalance":   toBalance.Bytes(),
-			"input":       input,
-		}
-		itc.transfers = append(itc.transfers, transfer)
-		break
+    value := data[len(data)-3]
+    from := contract.Address()
+    fromBalance := env.StateDB.GetBalance(from)
+    to := common.BytesToAddress(data[len(data)-2].Bytes())
+    toBalance := env.StateDB.GetBalance(common.BytesToAddress(data[len(data)-2].Bytes()))
 
-	case CALLCODE: // Message-call into this account with alternative account's code
-		break
+    offset := data[3].Int64()
+    size := offset + data[4].Int64()
+    input := memory.Get(offset, size)
 
-	case DELEGATECALL: // Message-call into this account with an alternative account's code, but persisting into this account with an alternative account's code
-		break
+    transfer := map[string]interface{}{
+      "op":          op.String(),
+      "value":       value.Bytes(),
+      "from":        from.Bytes(),
+      "fromBalance": fromBalance.Bytes(),
+      "to":          to.Bytes(),
+      "toBalance":   toBalance.Bytes(),
+      "input":       input,
+    }
+    itc.transfers = append(itc.transfers, transfer)
+    break
 
-	case SELFDESTRUCT: // Halt execution and register account for later deletion
-		data := stack.Data()
+  case CALLCODE: // Message-call into this account with alternative account's code
+    break
 
-		from := contract.Address()
+  case DELEGATECALL: // Message-call into this account with an alternative account's code, but persisting into this account with an alternative account's code
+    break
+
+  case SELFDESTRUCT: // Halt execution and register account for later deletion
+    log.Info("Internal-Txs-Tracer - OpCode: SELFDESTRUCT")
+
+    data := stack.Data()
+
+    from := contract.Address()
     value := env.StateDB.GetBalance(from)
     fromBalance := env.StateDB.GetBalance(from)
-		to := common.BytesToAddress(data[len(data)-1].Bytes())
-		toBalance := env.StateDB.GetBalance(common.BytesToAddress(data[len(data)-1].Bytes()))
-		input := make([]byte, 0)
+    to := common.BytesToAddress(data[len(data)-1].Bytes())
+    toBalance := env.StateDB.GetBalance(common.BytesToAddress(data[len(data)-1].Bytes()))
+    input := make([]byte, 0)
 
-		transfer := map[string]interface{}{
-			"op":          op.String(),
-			"value":       value.Bytes(),
-			"from":        from.Bytes(),
-			"fromBalance": fromBalance.Bytes(),
-			"to":          to.Bytes(),
-			"toBalance":   toBalance.Bytes(),
-			"input":       input,
-		}
-		itc.transfers = append(itc.transfers, transfer)
-		break
-	}
+    transfer := map[string]interface{}{
+      "op":          op.String(),
+      "value":       value.Bytes(),
+      "from":        from.Bytes(),
+      "fromBalance": fromBalance.Bytes(),
+      "to":          to.Bytes(),
+      "toBalance":   toBalance.Bytes(),
+      "input":       input,
+    }
+    itc.transfers = append(itc.transfers, transfer)
+    break
+  }
 
-	if err != nil {
-		itc.error = true
-		itc.reason = err.Error()
-		itc.transfers = make([]interface{}, 0)
-	}
+  if err != nil {
+    itc.error = ethvm.TraceUnknownError
+    itc.transfers = make([]map[string]interface{}, 0)
+  }
 
-	return nil
+  return nil
 }
 
 // CaptureFault implements the TracerCode interface to trace an execution fault while running an opcode.
 func (itc *InternalTxsTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
-	itc.error = true
-	itc.reason = err.Error()
-	itc.transfers = make([]interface{}, 0)
-	return nil
+  log.Info(fmt.Sprintf("Internal-Txs-Tracer - GetTraceResult / transfers: %d", len(itc.transfers)))
+
+  itc.error = ethvm.TraceUnknownError
+  itc.transfers = make([]map[string]interface{}, 0)
+  return nil
 }
 
 // CaptureEnd is called after the call finishes
 func (itc *InternalTxsTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
-	return nil
+  log.Info(fmt.Sprintf("Internal-Txs-Tracer - GetTraceResult / transfers: %d", len(itc.transfers)))
+  return nil
 }
 
 // GetTracerResult returns accumulated result
 func (itc *InternalTxsTracer) GetTracerResult() (map[string]interface{}, error) {
-	return map[string]interface{}{
-		"error":     itc.error,
-		"reason":    itc.reason,
-		"transfers": itc.transfers,
-	}, nil
+  log.Info(fmt.Sprintf("Internal-Txs-Tracer - GetTraceResult / transfers: %d", len(itc.transfers)))
+  return map[string]interface{}{
+    "error":     itc.error,
+    "transfers": itc.transfers,
+  }, nil
 }
 
 // NoopTracer provides a tracer implementation that does nothing.
@@ -528,34 +534,34 @@ type NoopTracer struct {
 
 // NewNoopTracer instantiates a new NoopTracer instance.
 func NewNoopTracer() (*NoopTracer, error) {
-	return &NoopTracer{}, nil
+  return &NoopTracer{}, nil
 }
 
 // CaptureStart implements the TracerCode interface to initialize the tracing operation.
 func (noop *NoopTracer) CaptureStart(from common.Address, to common.Address, call bool, input []byte, gas uint64, value *big.Int) error {
-	return nil
+  return nil
 }
 
 // CaptureState implements the TracerCode interface to trace a single step of VM execution
 func (noop *NoopTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
-	return nil
+  return nil
 }
 
 // CaptureFault implements the TracerCode interface to trace an execution fault while running an opcode.
 func (noop *NoopTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
-	return nil
+  return nil
 }
 
 // CaptureEnd is called after the call finishes
 func (noop *NoopTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
-	return nil
+  return nil
 }
 
 // GetTracerResult returns accumulated result
 func (noop *NoopTracer) GetTracerResult() (map[string]interface{}, error) {
-	return map[string]interface{}{
-		"error":     false,
-		"reason":    "",
-		"transfers": make([]interface{}, 0),
-	}, nil
+  return map[string]interface{}{
+    "error":     false,
+    "reason":    "",
+    "transfers": make([]interface{}, 0),
+  }, nil
 }

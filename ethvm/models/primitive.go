@@ -10,7 +10,6 @@ package models
 import (
 	"fmt"
 	"io"
-	"math"
 )
 
 type ByteReader interface {
@@ -20,10 +19,6 @@ type ByteReader interface {
 type ByteWriter interface {
 	Grow(int)
 	WriteByte(byte) error
-}
-
-type StringWriter interface {
-	WriteString(string) (int, error)
 }
 
 func encodeInt(w io.Writer, byteCount int, encoded uint64) error {
@@ -517,34 +512,10 @@ func readPendingTx(r io.Reader) (*PendingTx, error) {
 	return str, nil
 }
 
-func readString(r io.Reader) (string, error) {
-	len, err := readLong(r)
-	if err != nil {
-		return "", err
-	}
-
-	// makeslice can fail depending on available memory.
-	// We arbitrarily limit string size to sane default (~2.2GB).
-	if len < 0 || len > math.MaxInt32 {
-		return "", fmt.Errorf("string length out of range: %d", len)
-	}
-
-	bb := make([]byte, len)
-	_, err = io.ReadFull(r, bb)
-	if err != nil {
-		return "", err
-	}
-	return string(bb), nil
-}
-
 func readTrace(r io.Reader) (*Trace, error) {
 	var str = &Trace{}
 	var err error
-	str.IsError, err = readBool(r)
-	if err != nil {
-		return nil, err
-	}
-	str.Msg, err = readString(r)
+	str.Error, err = readInt(r)
 	if err != nil {
 		return nil, err
 	}
@@ -1132,27 +1103,9 @@ func writePendingTx(r *PendingTx, w io.Writer) error {
 
 	return nil
 }
-
-func writeString(r string, w io.Writer) error {
-	err := writeLong(int64(len(r)), w)
-	if err != nil {
-		return err
-	}
-	if sw, ok := w.(StringWriter); ok {
-		_, err = sw.WriteString(r)
-	} else {
-		_, err = w.Write([]byte(r))
-	}
-	return err
-}
-
 func writeTrace(r *Trace, w io.Writer) error {
 	var err error
-	err = writeBool(r.IsError, w)
-	if err != nil {
-		return err
-	}
-	err = writeString(r.Msg, w)
+	err = writeInt(r.Error, w)
 	if err != nil {
 		return err
 	}
