@@ -454,7 +454,7 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
     input := memory.Get(offset, size)
 
     transfer := map[string]interface{}{
-      "op":          op.String(),
+      "op":          op,
       "value":       value.Bytes(),
       "from":        from.Bytes(),
       "fromBalance": fromBalance.Bytes(),
@@ -484,7 +484,7 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
     input := make([]byte, 0)
 
     transfer := map[string]interface{}{
-      "op":          op.String(),
+      "op":          op,
       "value":       value.Bytes(),
       "from":        from.Bytes(),
       "fromBalance": fromBalance.Bytes(),
@@ -506,8 +506,7 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
 
 // CaptureFault implements the TracerCode interface to trace an execution fault while running an opcode.
 func (itc *InternalTxsTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
-  log.Info(fmt.Sprintf("Internal-Txs-Tracer - GetTraceResult / transfers: %d", len(itc.transfers)))
-
+  log.Info(fmt.Sprintf("Internal-Txs-Tracer - CaptureFault / transfers: %d", len(itc.transfers)))
   itc.error = ethvm.TraceUnknownError
   itc.transfers = make([]map[string]interface{}, 0)
   return nil
@@ -515,7 +514,7 @@ func (itc *InternalTxsTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, 
 
 // CaptureEnd is called after the call finishes
 func (itc *InternalTxsTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
-  log.Info(fmt.Sprintf("Internal-Txs-Tracer - GetTraceResult / transfers: %d", len(itc.transfers)))
+  log.Info(fmt.Sprintf("Internal-Txs-Tracer - CaptureEnd / transfers: %d", len(itc.transfers)))
   return nil
 }
 
