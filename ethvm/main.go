@@ -529,9 +529,12 @@ func processBlockTrace(raw map[string]interface{}) *models.Trace {
     }(),
     Transfers: func() []*models.Transfer {
       rawTransfers, _ := raw["transfers"].([]map[string]interface{})
-      transfers := make([]*models.Transfer, len(rawTransfers))
-      for _, rawTransfer := range rawTransfers {
-        transfer := &models.Transfer{
+      var transfers []*models.Transfer
+      for i, rawTransfer := range rawTransfers {
+        if rawTransfer == nil {
+          continue
+        }
+        transfer := models.Transfer{
           Op:          int32(rawTransfer["op"].(byte)),
           Value:       rawTransfer["value"].([]byte),
           From:        rawTransfer["from"].([]byte),
@@ -540,7 +543,7 @@ func processBlockTrace(raw map[string]interface{}) *models.Trace {
           ToBalance:   rawTransfer["toBalance"].([]byte),
           Input:       rawTransfer["input"].([]byte),
         }
-        transfers = append(transfers, transfer)
+        transfers = append(transfers, &transfer)
       }
       return transfers
     }(),

@@ -427,7 +427,7 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
     input := memory.Get(offset, size)
 
     transfer := map[string]interface{}{
-      "op":          op,
+      "op":          byte(op),
       "value":       value.Bytes(),
       "from":        from.Bytes(),
       "fromBalance": fromBalance.Bytes(),
@@ -454,7 +454,7 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
     input := memory.Get(offset, size)
 
     transfer := map[string]interface{}{
-      "op":          op,
+      "op":          byte(op),
       "value":       value.Bytes(),
       "from":        from.Bytes(),
       "fromBalance": fromBalance.Bytes(),
@@ -484,7 +484,7 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
     input := make([]byte, 0)
 
     transfer := map[string]interface{}{
-      "op":          op,
+      "op":          byte(op),
       "value":       value.Bytes(),
       "from":        from.Bytes(),
       "fromBalance": fromBalance.Bytes(),
