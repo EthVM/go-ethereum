@@ -409,22 +409,57 @@ func (itc *InternalTxsTracer) CaptureStart(from common.Address, to common.Addres
 
 // CaptureState implements the TracerCode interface to trace a single step of VM execution
 func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
+  if err != nil {
+    log.Info("InternalTxsTracer - CaptureState", "error", err.Error())
+    itc.error = ethvm.TraceUnknownError
+    itc.transfers = make([]map[string]interface{}, 0)
+  }
+
   switch op {
   case CREATE: // Creates a new account with associated code
-    log.Info("Internal-Txs-Tracer - OpCode: CREATE")
+    log.Info("InternalTxsTracer - CaptureState", "opcode", "CREATE")
 
     data := stack.Data()
+    dataSize := stack.len()
 
+    // From info
     from := contract.Address()
     fromBalance := env.StateDB.GetBalance(from)
+
+    // Nonce info
     nonce := env.StateDB.GetNonce(from)
+
+    // To info
     to := crypto.CreateAddress(from, nonce)
     toBalance := env.StateDB.GetBalance(to)
-    value := data[len(data)-1]
 
-    offset := data[len(data)-2].Int64()
-    size := offset + data[len(data)-3].Int64()
-    input := memory.Get(offset, size)
+    // Value info
+    value := func() *big.Int {
+      if dataSize >= dataSize-1 {
+        return data[dataSize-1]
+      }
+      return common.Big0
+    }()
+
+    // Input info
+    offset := func() int64 {
+      if dataSize >= dataSize-2 {
+        return data[dataSize-2].Int64()
+      }
+      return -1
+    }()
+    size := func() int64 {
+      if dataSize >= dataSize-2 {
+        return data[dataSize-3].Int64()
+      }
+      return -1
+    }()
+    input := func() []byte {
+      if offset == -1 || size == -1 {
+        return make([]byte, 0)
+      }
+      return memory.Get(offset, size)
+    }()
 
     transfer := map[string]interface{}{
       "op":          byte(op),
@@ -439,19 +474,47 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
     break
 
   case CALL: // Message-call into an account
-    log.Info("Internal-Txs-Tracer - OpCode: CALL")
+    log.Info("InternalTxsTracer - CaptureState", "opcode", "CALL")
 
     data := stack.Data()
+    dataSize := stack.len()
 
-    value := data[len(data)-3]
+    // From info
     from := contract.Address()
     fromBalance := env.StateDB.GetBalance(from)
-    to := common.BytesToAddress(data[len(data)-2].Bytes())
-    toBalance := env.StateDB.GetBalance(common.BytesToAddress(data[len(data)-2].Bytes()))
 
-    offset := data[3].Int64()
-    size := offset + data[4].Int64()
-    input := memory.Get(offset, size)
+    // To info
+    rawTo := data[dataSize-2].Bytes()
+    to := common.BytesToAddress(rawTo)
+    toBalance := env.StateDB.GetBalance(common.BytesToAddress(rawTo))
+
+    // Input info
+    offset := func() int64 {
+      if dataSize >= dataSize-4 {
+        return data[dataSize-4].Int64()
+      }
+      return -1
+    }()
+    size := func() int64 {
+      if dataSize >= dataSize-5 {
+        return data[dataSize-5].Int64()
+      }
+      return -1
+    }()
+    input := func() []byte {
+      if offset == -1 || size == -1 {
+        return make([]byte, 0)
+      }
+      return memory.Get(offset, size)
+    }()
+
+    // Value info
+    value := func() *big.Int {
+      if dataSize >= dataSize-3 {
+        return data[dataSize-3]
+      }
+      return common.Big0
+    }()
 
     transfer := map[string]interface{}{
       "op":          byte(op),
@@ -472,15 +535,22 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
     break
 
   case SELFDESTRUCT: // Halt execution and register account for later deletion
-    log.Info("Internal-Txs-Tracer - OpCode: SELFDESTRUCT")
+    log.Info("InternalTxsTracer - CaptureState", "opcode", "SELFDESTRUCT")
 
     data := stack.Data()
+    dataSize := stack.len()
 
+    // From info
     from := contract.Address()
-    value := env.StateDB.GetBalance(from)
     fromBalance := env.StateDB.GetBalance(from)
-    to := common.BytesToAddress(data[len(data)-1].Bytes())
-    toBalance := env.StateDB.GetBalance(common.BytesToAddress(data[len(data)-1].Bytes()))
+
+    // To Info
+    rawTo := data[dataSize-1].Bytes()
+    to := common.BytesToAddress(rawTo)
+    toBalance := env.StateDB.GetBalance(common.BytesToAddress(rawTo))
+
+    // Value / Input info
+    value := env.StateDB.GetBalance(from)
     input := make([]byte, 0)
 
     transfer := map[string]interface{}{
@@ -496,17 +566,12 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
     break
   }
 
-  if err != nil {
-    itc.error = ethvm.TraceUnknownError
-    itc.transfers = make([]map[string]interface{}, 0)
-  }
-
   return nil
 }
 
 // CaptureFault implements the TracerCode interface to trace an execution fault while running an opcode.
 func (itc *InternalTxsTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
-  log.Info(fmt.Sprintf("Internal-Txs-Tracer - CaptureFault / transfers: %d", len(itc.transfers)))
+  log.Info("Internal-Txs-Tracer - CaptureFault", "internal-txs", len(itc.transfers))
   itc.error = ethvm.TraceUnknownError
   itc.transfers = make([]map[string]interface{}, 0)
   return nil
@@ -514,13 +579,12 @@ func (itc *InternalTxsTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, 
 
 // CaptureEnd is called after the call finishes
 func (itc *InternalTxsTracer) CaptureEnd(output []byte, gasUsed uint64, t time.Duration, err error) error {
-  log.Info(fmt.Sprintf("Internal-Txs-Tracer - CaptureEnd / transfers: %d", len(itc.transfers)))
   return nil
 }
 
 // GetTracerResult returns accumulated result
 func (itc *InternalTxsTracer) GetTracerResult() (map[string]interface{}, error) {
-  log.Info(fmt.Sprintf("Internal-Txs-Tracer - GetTraceResult / transfers: %d", len(itc.transfers)))
+  log.Info("Internal-Txs-Tracer - GetTracerResult", "internal-txs", len(itc.transfers))
   return map[string]interface{}{
     "error":     itc.error,
     "transfers": itc.transfers,

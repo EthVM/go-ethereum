@@ -51,6 +51,10 @@ const (
 const (
   TraceOk = iota
   TraceOutOfGasError
+  TraceDepth
+  TraceLimitReached
+  TraceInsufficientBalance
+  TraceContractAddressCollision
   TraceUnknownError
 )
 
@@ -530,7 +534,7 @@ func processBlockTrace(raw map[string]interface{}) *models.Trace {
     Transfers: func() []*models.Transfer {
       rawTransfers, _ := raw["transfers"].([]map[string]interface{})
       var transfers []*models.Transfer
-      for i, rawTransfer := range rawTransfers {
+      for _, rawTransfer := range rawTransfers {
         if rawTransfer == nil {
           continue
         }
