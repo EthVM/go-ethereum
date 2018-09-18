@@ -410,8 +410,8 @@ func (itc *InternalTxsTracer) CaptureStart(from common.Address, to common.Addres
 // CaptureState implements the TracerCode interface to trace a single step of VM execution
 func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
   if err != nil {
-    log.Info("InternalTxsTracer - CaptureState", "error", err.Error())
-    itc.error = ethvm.TraceUnknownError
+    log.Info("InternalTxsTracer - CaptureState", "error", err.Error(), "internal-txs (before deleting)", len(itc.transfers))
+    itc.error = toTraceError(err)
     itc.transfers = make([]map[string]interface{}, 0)
   }
 
@@ -571,8 +571,8 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
 
 // CaptureFault implements the TracerCode interface to trace an execution fault while running an opcode.
 func (itc *InternalTxsTracer) CaptureFault(env *EVM, pc uint64, op OpCode, gas, cost uint64, memory *Memory, stack *Stack, contract *Contract, depth int, err error) error {
-  log.Info("Internal-Txs-Tracer - CaptureFault", "internal-txs", len(itc.transfers))
-  itc.error = ethvm.TraceUnknownError
+  log.Info("Internal-Txs-Tracer - CaptureFault", "error", itc.error, "internal-txs", len(itc.transfers))
+  itc.error = toTraceError(err)
   itc.transfers = make([]map[string]interface{}, 0)
   return nil
 }
@@ -584,11 +584,30 @@ func (itc *InternalTxsTracer) CaptureEnd(output []byte, gasUsed uint64, t time.D
 
 // GetTracerResult returns accumulated result
 func (itc *InternalTxsTracer) GetTracerResult() (map[string]interface{}, error) {
-  log.Info("Internal-Txs-Tracer - GetTracerResult", "internal-txs", len(itc.transfers))
+  log.Info("Internal-Txs-Tracer - GetTracerResult", "error", itc.error, "internal-txs", len(itc.transfers))
   return map[string]interface{}{
     "error":     itc.error,
     "transfers": itc.transfers,
   }, nil
+}
+
+func toTraceError(err error) int {
+  switch err {
+  case ErrOutOfGas:
+    return ethvm.TraceOutOfGasError
+  case ErrCodeStoreOutOfGas:
+    return ethvm.TraceCodeStoreOutOfGas
+  case ErrDepth:
+    return ethvm.TraceDepth
+  case ErrTraceLimitReached:
+    return ethvm.TraceLimitReached
+  case ErrInsufficientBalance:
+    return ethvm.TraceInsufficientBalance
+  case ErrContractAddressCollision:
+    return ethvm.TraceContractAddressCollision
+  default:
+    return ethvm.TraceUnknownError
+  }
 }
 
 // NoopTracer provides a tracer implementation that does nothing.

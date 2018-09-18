@@ -51,6 +51,7 @@ const (
 const (
   TraceOk = iota
   TraceOutOfGasError
+  TraceCodeStoreOutOfGas
   TraceDepth
   TraceLimitReached
   TraceInsufficientBalance
