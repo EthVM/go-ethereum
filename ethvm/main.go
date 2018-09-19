@@ -139,7 +139,7 @@ type BlockIn struct {
   Status          byte
 }
 
-func (in *BlockIn) bytes(schemaId int, state *state.StateDB) []byte {
+func (in *BlockIn) bytes(schemaId int) []byte {
   block := in.Block
   header := block.Header()
   td := func() []byte {
@@ -149,7 +149,7 @@ func (in *BlockIn) bytes(schemaId int, state *state.StateDB) []byte {
     return uintToBytes((new(big.Int).Add(block.Difficulty(), in.PrevTd)).Uint64())
   }()
   txFees, blockReward, uncleReward := calculateBlockReward(in)
-  txs := processBlockTxs(state, in)
+  txs := processBlockTxs(in)
   uncles := func() [][]byte {
     uncles := make([][]byte, len(block.Uncles()))
     for i, uncle := range block.Uncles() {
@@ -282,7 +282,8 @@ type BlockTx struct {
 
 // EthVM Struct that holds metadata related to EthVM
 type EthVM struct {
-  enabled bool
+  enabled   bool
+  connected bool
 
   // Kafka
   brokers              string
@@ -372,12 +373,12 @@ func (e *EthVM) isEnabled() bool {
 }
 
 func (e *EthVM) isConnected() bool {
-  return e.isEnabled()
+  return e.connected
 }
 
 // Connect Performs connection to the DB (and creates tables and indices if needed)
 func (e *EthVM) Connect() {
-  if !e.isEnabled() {
+  if !e.isEnabled() || e.isConnected() {
     return
   }
 
@@ -406,10 +407,12 @@ func (e *EthVM) Connect() {
     Brokers: []string{e.brokers},
     Topic:   e.pTxsTopic,
   })
+
+  e.connected = true
 }
 
 // ProcessBlock Adds a new Block to EthVM
-func (e *EthVM) ProcessBlock(state *state.StateDB, blockIn *BlockIn) {
+func (e *EthVM) ProcessBlock(blockIn *BlockIn) {
   if !e.isEnabled() || e.ignoreProcessingBlocks {
     return
   }
@@ -417,7 +420,7 @@ func (e *EthVM) ProcessBlock(state *state.StateDB, blockIn *BlockIn) {
   // Send to Kafka
   err := e.blocksW.WriteMessages(context.Background(), kafka.Message{
     Key:   []byte(hexutil.Encode(blockIn.Block.Header().Hash().Bytes())),
-    Value: blockIn.bytes(e.blocksSchemaId, state),
+    Value: blockIn.bytes(e.blocksSchemaId),
   })
   if err != nil {
     panic(err)
@@ -543,9 +546,7 @@ func processBlockTrace(raw map[string]interface{}) *models.Trace {
           Op:          int32(rawTransfer["op"].(byte)),
           Value:       rawTransfer["value"].([]byte),
           From:        rawTransfer["from"].([]byte),
-          FromBalance: rawTransfer["fromBalance"].([]byte),
           To:          rawTransfer["to"].([]byte),
-          ToBalance:   rawTransfer["toBalance"].([]byte),
           Input:       rawTransfer["input"].([]byte),
         }
         transfers = append(transfers, &transfer)
@@ -555,7 +556,7 @@ func processBlockTrace(raw map[string]interface{}) *models.Trace {
   }
 }
 
-func processBlockTxs(state *state.StateDB, in *BlockIn) []*models.Transaction {
+func processBlockTxs(in *BlockIn) []*models.Transaction {
   if in == nil {
     return make([]*models.Transaction, 0)
   }
@@ -572,7 +573,6 @@ func processBlockTxs(state *state.StateDB, in *BlockIn) []*models.Transaction {
     signer := in.Signer
     from, _ := types.Sender(signer, rawTx)
     _v, _r, _s := rawTx.RawSignatureValues()
-    fromBalance := state.GetBalance(from)
     to := func() models.UnionNullBytes {
       if rawTx.To() == nil {
         return models.UnionNullBytes{
@@ -585,18 +585,6 @@ func processBlockTxs(state *state.StateDB, in *BlockIn) []*models.Transaction {
         UnionType: models.UnionNullBytesTypeEnumBytes,
       }
     }()
-    toBalance := func() models.UnionNullBytes {
-      if rawTx.To() == nil {
-        return models.UnionNullBytes{
-          UnionType: models.UnionNullBytesTypeEnumNull,
-        }
-      }
-      toBalance := state.GetBalance(*rawTx.To()).Uint64()
-      return models.UnionNullBytes{
-        Bytes:     uintToBytes(toBalance),
-        UnionType: models.UnionNullBytesTypeEnumBytes,
-      }
-    }
     value := rawTx.Value()
     input := rawTx.Data()
     contractAddress := func() models.UnionNullBytes {
@@ -619,9 +607,7 @@ func processBlockTxs(state *state.StateDB, in *BlockIn) []*models.Transaction {
       Nonce:             uintToBytes(rawTx.Nonce()),
       NonceHash:         crypto.Keccak256Hash(from.Bytes(), big.NewInt(int64(rawTx.Nonce())).Bytes()).Bytes(),
       From:              from.Bytes(),
-      FromBalance:       uintToBytes(fromBalance.Uint64()),
       To:                to,
-      ToBalance:         toBalance(),
       Input:             input,
       Gas:               uintToBytes(rawTx.Gas()),
       GasPrice:          uintToBytes(rawTx.GasPrice().Uint64()),
@@ -651,7 +637,6 @@ func processPendingTx(state *state.StateDB, raw *PendingTxIn) models.PendingTx {
 
   tx := raw.Tx
   from, _ := types.Sender(raw.Signer, raw.Tx)
-  fromBalance := state.GetBalance(from)
   to := func() models.UnionNullBytes {
     if tx.To() == nil {
       return models.UnionNullBytes{
@@ -664,18 +649,6 @@ func processPendingTx(state *state.StateDB, raw *PendingTxIn) models.PendingTx {
       UnionType: models.UnionNullBytesTypeEnumBytes,
     }
   }()
-  toBalance := func() models.UnionNullBytes {
-    if tx.To() == nil {
-      return models.UnionNullBytes{
-        UnionType: models.UnionNullBytesTypeEnumNull,
-      }
-    }
-    toBalance := uintToBytes(state.GetBalance(*tx.To()).Uint64())
-    return models.UnionNullBytes{
-      Bytes:     toBalance,
-      UnionType: models.UnionNullBytesTypeEnumBytes,
-    }
-  }
   contractAddress := func() models.UnionNullBytes {
     if raw.Receipt == nil || raw.Receipt.ContractAddress == (common.Address{}) {
       return models.UnionNullBytes{
@@ -705,12 +678,7 @@ func processPendingTx(state *state.StateDB, raw *PendingTxIn) models.PendingTx {
       Bytes:     from.Bytes(),
       UnionType: models.UnionNullBytesTypeEnumBytes,
     },
-    FromBalance: models.UnionNullBytes{
-      Bytes:     uintToBytes(fromBalance.Uint64()),
-      UnionType: models.UnionNullBytesTypeEnumBytes,
-    },
     To:        to,
-    ToBalance: toBalance(),
     Input: models.UnionNullBytes{
       Bytes:     input,
       UnionType: models.UnionNullBytesTypeEnumBytes,
@@ -780,14 +748,8 @@ func processSimplePendingTxs(raw *PendingTxIn) models.PendingTx {
     From: models.UnionNullBytes{
       UnionType: models.UnionNullBytesTypeEnumNull,
     },
-    FromBalance: models.UnionNullBytes{
-      UnionType: models.UnionNullBytesTypeEnumBytes,
-    },
     To: models.UnionNullBytes{
       UnionType: models.UnionNullBytesTypeEnumNull,
-    },
-    ToBalance: models.UnionNullBytes{
-      UnionType: models.UnionNullBytesTypeEnumBytes,
     },
     Input: models.UnionNullBytes{
       UnionType: models.UnionNullBytesTypeEnumNull,

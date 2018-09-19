@@ -424,14 +424,12 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
 
     // From info
     from := contract.Address()
-    fromBalance := env.StateDB.GetBalance(from)
 
     // Nonce info
     nonce := env.StateDB.GetNonce(from)
 
     // To info
     to := crypto.CreateAddress(from, nonce)
-    toBalance := env.StateDB.GetBalance(to)
 
     // Value info
     value := func() *big.Int {
@@ -465,9 +463,7 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
       "op":          byte(op),
       "value":       value.Bytes(),
       "from":        from.Bytes(),
-      "fromBalance": fromBalance.Bytes(),
       "to":          to.Bytes(),
-      "toBalance":   toBalance.Bytes(),
       "input":       input,
     }
     itc.transfers = append(itc.transfers, transfer)
@@ -481,12 +477,10 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
 
     // From info
     from := contract.Address()
-    fromBalance := env.StateDB.GetBalance(from)
 
     // To info
     rawTo := data[dataSize-2].Bytes()
     to := common.BytesToAddress(rawTo)
-    toBalance := env.StateDB.GetBalance(common.BytesToAddress(rawTo))
 
     // Input info
     offset := func() int64 {
@@ -520,9 +514,7 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
       "op":          byte(op),
       "value":       value.Bytes(),
       "from":        from.Bytes(),
-      "fromBalance": fromBalance.Bytes(),
       "to":          to.Bytes(),
-      "toBalance":   toBalance.Bytes(),
       "input":       input,
     }
     itc.transfers = append(itc.transfers, transfer)
@@ -542,12 +534,10 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
 
     // From info
     from := contract.Address()
-    fromBalance := env.StateDB.GetBalance(from)
 
     // To Info
     rawTo := data[dataSize-1].Bytes()
     to := common.BytesToAddress(rawTo)
-    toBalance := env.StateDB.GetBalance(common.BytesToAddress(rawTo))
 
     // Value / Input info
     value := env.StateDB.GetBalance(from)
@@ -557,9 +547,7 @@ func (itc *InternalTxsTracer) CaptureState(env *EVM, pc uint64, op OpCode, gas, 
       "op":          byte(op),
       "value":       value.Bytes(),
       "from":        from.Bytes(),
-      "fromBalance": fromBalance.Bytes(),
       "to":          to.Bytes(),
-      "toBalance":   toBalance.Bytes(),
       "input":       input,
     }
     itc.transfers = append(itc.transfers, transfer)

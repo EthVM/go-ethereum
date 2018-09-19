@@ -436,15 +436,7 @@ func readPendingTx(r io.Reader) (*PendingTx, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.FromBalance, err = readUnionNullBytes(r)
-	if err != nil {
-		return nil, err
-	}
 	str.To, err = readUnionNullBytes(r)
-	if err != nil {
-		return nil, err
-	}
-	str.ToBalance, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -558,15 +550,7 @@ func readTransaction(r io.Reader) (*Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.FromBalance, err = readBytes(r)
-	if err != nil {
-		return nil, err
-	}
 	str.To, err = readUnionNullBytes(r)
-	if err != nil {
-		return nil, err
-	}
-	str.ToBalance, err = readUnionNullBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -645,15 +629,7 @@ func readTransfer(r io.Reader) (*Transfer, error) {
 	if err != nil {
 		return nil, err
 	}
-	str.FromBalance, err = readBytes(r)
-	if err != nil {
-		return nil, err
-	}
 	str.To, err = readBytes(r)
-	if err != nil {
-		return nil, err
-	}
-	str.ToBalance, err = readBytes(r)
 	if err != nil {
 		return nil, err
 	}
@@ -1028,15 +1004,7 @@ func writePendingTx(r *PendingTx, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeUnionNullBytes(r.FromBalance, w)
-	if err != nil {
-		return err
-	}
 	err = writeUnionNullBytes(r.To, w)
-	if err != nil {
-		return err
-	}
-	err = writeUnionNullBytes(r.ToBalance, w)
 	if err != nil {
 		return err
 	}
@@ -1146,15 +1114,7 @@ func writeTransaction(r *Transaction, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeBytes(r.FromBalance, w)
-	if err != nil {
-		return err
-	}
 	err = writeUnionNullBytes(r.To, w)
-	if err != nil {
-		return err
-	}
-	err = writeUnionNullBytes(r.ToBalance, w)
 	if err != nil {
 		return err
 	}
@@ -1231,15 +1191,7 @@ func writeTransfer(r *Transfer, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = writeBytes(r.FromBalance, w)
-	if err != nil {
-		return err
-	}
 	err = writeBytes(r.To, w)
-	if err != nil {
-		return err
-	}
-	err = writeBytes(r.ToBalance, w)
 	if err != nil {
 		return err
 	}

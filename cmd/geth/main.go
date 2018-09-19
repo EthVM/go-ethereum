@@ -264,6 +264,10 @@ func main() {
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down.
 func geth(ctx *cli.Context) error {
+  // Start EthVM
+  ethvm.Init(ctx)
+  ethvm.GetInstance().Connect()
+
 	node := makeFullNode(ctx)
 	startNode(ctx, node)
 	node.Wait()
@@ -275,10 +279,6 @@ func geth(ctx *cli.Context) error {
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node) {
 	debug.Memsize.Add("node", stack)
-
-	// Start EthVM
-	ethvm.Init(ctx)
-	ethvm.GetInstance().Connect()
 
 	// Start up the node itself
 	utils.StartNode(stack)
