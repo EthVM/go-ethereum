@@ -21,7 +21,6 @@ import (
 	"sort"
 
 	"github.com/ethereum/go-ethereum/log"
-	colorable "github.com/mattn/go-colorable"
 
 	cli "gopkg.in/urfave/cli.v1"
 )
@@ -30,15 +29,15 @@ var (
 	endpoints        []string
 	includeLocalhost bool
 	cluster          string
+	appName          string
 	scheme           string
 	filesize         int
 	from             int
 	to               int
+	verbosity        int
 )
 
 func main() {
-	log.PrintOrigins(true)
-	log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(colorable.NewColorableStderr(), log.TerminalFormat(true))))
 
 	app := cli.NewApp()
 	app.Name = "smoke-test"
@@ -47,9 +46,15 @@ func main() {
 	app.Flags = []cli.Flag{
 		cli.StringFlag{
 			Name:        "cluster-endpoint",
-			Value:       "testing",
-			Usage:       "cluster to point to (open, or testing)",
+			Value:       "prod",
+			Usage:       "cluster to point to (prod or a given namespace)",
 			Destination: &cluster,
+		},
+		cli.StringFlag{
+			Name:        "app",
+			Value:       "swarm",
+			Usage:       "application to point to (swarm or swarm-private)",
+			Destination: &appName,
 		},
 		cli.IntFlag{
 			Name:        "cluster-from",
@@ -76,9 +81,15 @@ func main() {
 		},
 		cli.IntFlag{
 			Name:        "filesize",
-			Value:       1,
-			Usage:       "file size for generated random file in MB",
+			Value:       1024,
+			Usage:       "file size for generated random file in KB",
 			Destination: &filesize,
+		},
+		cli.IntFlag{
+			Name:        "verbosity",
+			Value:       1,
+			Usage:       "verbosity",
+			Destination: &verbosity,
 		},
 	}
 
@@ -89,6 +100,12 @@ func main() {
 			Usage:   "upload and sync",
 			Action:  cliUploadAndSync,
 		},
+		{
+			Name:    "feed_sync",
+			Aliases: []string{"f"},
+			Usage:   "feed update generate, upload and sync",
+			Action:  cliFeedUploadAndSync,
+		},
 	}
 
 	sort.Sort(cli.FlagsByName(app.Flags))
@@ -97,5 +114,6 @@ func main() {
 	err := app.Run(os.Args)
 	if err != nil {
 		log.Error(err.Error())
+		os.Exit(1)
 	}
 }
