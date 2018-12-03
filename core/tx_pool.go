@@ -28,8 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/ethvm"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -797,27 +795,6 @@ func (pool *TxPool) addTx(tx *types.Transaction, local bool) error {
 		from, _ := types.Sender(pool.signer, tx) // already validated
 		pool.promoteExecutables([]common.Address{from})
 	}
-
-	var (
-		totalUsedGas = new(uint64)
-		gp           = new(GasPool).AddGas(pool.chain.CurrentBlock().GasLimit())
-		copyState    = pool.currentState.Copy()
-	)
-
-	// Format pending tx
-	receipt, _, tResult, _ := TraceApplyTransaction(pool.chainconfig, pool.chain.(*BlockChain), nil, gp, copyState, pool.chain.CurrentBlock().Header(), tx, totalUsedGas, vm.Config{})
-	ptx := &ethvm.PendingTx{
-		Tx:      tx,
-		Trace:   tResult,
-		State:   copyState,
-		Signer:  pool.signer,
-		Receipt: receipt,
-		Block:   pool.chain.CurrentBlock(),
-	}
-
-	// Store validated pending txs into Ethvm
-	ethvm.GetInstance().InsertPendingTx(copyState, ptx)
-
 	return nil
 }
 
@@ -832,35 +809,15 @@ func (pool *TxPool) addTxs(txs []*types.Transaction, local bool) []error {
 // addTxsLocked attempts to queue a batch of transactions if they are valid,
 // whilst assuming the transaction pool lock is already held.
 func (pool *TxPool) addTxsLocked(txs []*types.Transaction, local bool) []error {
-	// Add the batch of transaction, tracking the accepted ones
+	// Add the batch of transactions, tracking the accepted ones
 	dirty := make(map[common.Address]struct{})
 	errs := make([]error, len(txs))
-
-	copyState := pool.currentState.Copy()
-	ptxs := make([]*ethvm.PendingTx, len(txs))
 
 	for i, tx := range txs {
 		var replace bool
 		if replace, errs[i] = pool.add(tx, local); errs[i] == nil && !replace {
 			from, _ := types.Sender(pool.signer, tx) // already validated
 			dirty[from] = struct{}{}
-		}
-
-		if errs[i] != nil {
-			var (
-				totalUsedGas = new(uint64)
-				gp           = new(GasPool).AddGas(pool.chain.CurrentBlock().GasLimit())
-			)
-
-			receipt, _, tResult, _ := TraceApplyTransaction(pool.chainconfig, pool.chain.(*BlockChain), nil, gp, copyState, pool.chain.CurrentBlock().Header(), tx, totalUsedGas, vm.Config{})
-			ptxs = append(ptxs, &ethvm.PendingTx{
-				Tx:      tx,
-				Trace:   tResult,
-				State:   copyState,
-				Signer:  pool.signer,
-				Receipt: receipt,
-				Block:   pool.chain.CurrentBlock(),
-			})
 		}
 	}
 	// Only reprocess the internal state if something was actually added
@@ -871,10 +828,6 @@ func (pool *TxPool) addTxsLocked(txs []*types.Transaction, local bool) []error {
 		}
 		pool.promoteExecutables(addrs)
 	}
-
-	// Store validated pending txs into Ethvm
-	ethvm.GetInstance().InsertPendingTxs(copyState, ptxs)
-
 	return errs
 }
 
@@ -945,9 +898,6 @@ func (pool *TxPool) removeTx(hash common.Hash, outofbound bool) {
 			delete(pool.queue, addr)
 		}
 	}
-
-	// Remove from EthVM
-	ethvm.GetInstance().RemovePendingTx(hash)
 }
 
 // promoteExecutables moves transactions that have become processable from the
@@ -976,7 +926,6 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			log.Trace("Removed old queued transaction", "hash", hash)
 			pool.all.Remove(hash)
 			pool.priced.Removed()
-			ethvm.GetInstance().RemovePendingTx(hash)
 		}
 		// Drop all transactions that are too costly (low balance or out of gas)
 		drops, _ := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
@@ -986,7 +935,6 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 			pool.all.Remove(hash)
 			pool.priced.Removed()
 			queuedNofundsCounter.Inc(1)
-			ethvm.GetInstance().RemovePendingTx(hash)
 		}
 		// Gather all executable transactions and promote them
 		for _, tx := range list.Ready(pool.pendingState.GetNonce(addr)) {
@@ -1003,7 +951,6 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 				pool.all.Remove(hash)
 				pool.priced.Removed()
 				queuedRateLimitCounter.Inc(1)
-				ethvm.GetInstance().RemovePendingTx(hash)
 				log.Trace("Removed cap-exceeding queued transaction", "hash", hash)
 			}
 		}
@@ -1052,7 +999,6 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 							hash := tx.Hash()
 							pool.all.Remove(hash)
 							pool.priced.Removed()
-							ethvm.GetInstance().RemovePendingTx(hash)
 
 							// Update the account nonce to the dropped transaction
 							if nonce := tx.Nonce(); pool.pendingState.GetNonce(offenders[i]) > nonce {
@@ -1075,7 +1021,6 @@ func (pool *TxPool) promoteExecutables(accounts []common.Address) {
 						hash := tx.Hash()
 						pool.all.Remove(hash)
 						pool.priced.Removed()
-						ethvm.GetInstance().RemovePendingTx(hash)
 
 						// Update the account nonce to the dropped transaction
 						if nonce := tx.Nonce(); pool.pendingState.GetNonce(addr) > nonce {
@@ -1145,7 +1090,6 @@ func (pool *TxPool) demoteUnexecutables() {
 			log.Trace("Removed old pending transaction", "hash", hash)
 			pool.all.Remove(hash)
 			pool.priced.Removed()
-			ethvm.GetInstance().RemovePendingTx(hash)
 		}
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
 		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), pool.currentMaxGas)
@@ -1155,7 +1099,6 @@ func (pool *TxPool) demoteUnexecutables() {
 			pool.all.Remove(hash)
 			pool.priced.Removed()
 			pendingNofundsCounter.Inc(1)
-			ethvm.GetInstance().RemovePendingTx(hash)
 		}
 		for _, tx := range invalids {
 			hash := tx.Hash()
